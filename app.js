@@ -307,6 +307,17 @@ var App = (function () {
     this.body.push(pXml(d, { align: "center", after: 4, keep: true }));
     return this;
   };
+  /* рисунок в истинном масштабе на отдельной альбомной странице (А4, если помещается, иначе А3) */
+  Docx.prototype.landscape = function (png, wPx, hPx, widthCm, url, caption) {
+    var m = this.t.margins, mar = '<w:pgMar w:top="' + m[0] + '" w:right="' + m[1] + '" w:bottom="' + m[2] + '" w:left="' + m[3] + '" w:header="708" w:footer="708" w:gutter="0"/>';
+    var hCm = widthCm * hPx / wPx, a4w = (16838 - m[1] - m[3]) / 567, a4h = (11906 - m[0] - m[2]) / 567 - 1.6;
+    var big = widthCm > a4w || hCm > a4h, pw = big ? 23811 : 16838, ph = big ? 16838 : 11906;
+    this.body.push('<w:p><w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/>' + mar + '</w:sectPr></w:pPr></w:p>');
+    this.image(png, wPx, hPx, widthCm, url);
+    this.para(caption + (big ? " (лист А3, альбомная ориентация)" : ""), { align: "center", size: 10, after: 0 });
+    this.body.push('<w:p><w:pPr><w:sectPr><w:pgSz w:w="' + pw + '" w:h="' + ph + '" w:orient="landscape"/>' + mar + '</w:sectPr></w:pPr></w:p>');
+    return this;
+  };
   Docx.prototype.pageBreak = function () { this.body.push('<w:p><w:r><w:br w:type="page"/></w:r></w:p>'); this.html.push('<hr class="pb">'); return this; };
   Docx.prototype.preview = function () {
     return '<div style="font-family:' + this.t.font.css.replace(/"/g, "'") + '">' + this.html.join("") + "</div>";
@@ -701,7 +712,7 @@ var App = (function () {
       var ids = Object.keys(canv), urls = {};
       ids.forEach(function (id) { urls[id] = canv[id].toDataURL("image/png"); });
       return Promise.all(ids.map(function (id) { return App.canvasPng(canv[id]); })).then(function (pngs) {
-        var imgs = {}; ids.forEach(function (id, i) { imgs[id] = { png: pngs[i], w: canv[id].width, h: canv[id].height, url: urls[id] }; });
+        var imgs = {}; ids.forEach(function (id, i) { imgs[id] = { png: pngs[i], w: canv[id].width, h: canv[id].height, url: urls[id], cm: canv[id]._cm }; });
         S.doc = buildDocx(imgs); return S.doc;
       });
     }
@@ -730,8 +741,10 @@ var App = (function () {
         if (s.answer) D.para([{ t: (s.answerLabel || "Ответ") + ": ", bold: true }, s.answer], { align: "just", after: 6 });
         (s.figs || []).forEach(function (id) {
           if (done[id] || !imgs[id]) return; done[id] = 1; fn++;
-          D.image(imgs[id].png, imgs[id].w, imgs[id].h, Math.min(15, 10 * imgs[id].w / imgs[id].h), imgs[id].url);
-          D.para("Рисунок " + fn + " — " + cfg.figs[id].caption, { align: "center", size: 10, after: 8 });
+          var im = imgs[id], capT = "Рисунок " + fn + " — " + cfg.figs[id].caption;
+          if (im.cm && im.cm > 17.05) { D.landscape(im.png, im.w, im.h, im.cm, im.url, capT); return; }
+          D.image(im.png, im.w, im.h, im.cm || Math.min(15, 10 * im.w / im.h), im.url);
+          D.para(capT, { align: "center", size: 10, after: 8 });
         });
       });
       if (cfg.summary !== false) {
@@ -5430,7 +5443,7 @@ var TUS = (function () {
   }
 
   var DISC = App.discipline("tus", "Теория и устройство судна", "ТУС");
-  DISC.sections = [{ id: "3", name: "3 курс", desc: "Практические работы: посадка и остойчивость судна (7 работ)" }, { id: "4", name: "4 курс", desc: "Работы 4 курса — будут добавлены" }];
+  DISC.sections = [{ id: "3", name: "3 курс", desc: "Практические работы: посадка и остойчивость судна (7 работ)" }, { id: "4", name: "4 курс", desc: "Аварийное судно (т/х «Новгород»): остойчивость при смещении груза, спрямление" }];
   var shipSel = Object.keys(SHIPS).map(function (k) { return [k, SHIPS[k].name]; });
 
   App.taskWork({
@@ -5481,6 +5494,35 @@ var TUS = (function () {
   }
   function bracket(rows, x, xi) { for (var i = 1; i < rows.length; i++) if (x <= rows[i][xi]) return [rows[i - 1], rows[i]]; return [rows[rows.length - 2], rows[rows.length - 1]]; }
   function inRange(rows, x, xi) { return x >= rows[0][xi] - 1e-9 && x <= rows[rows.length - 1][xi] + 1e-9; }
+  /* монотонный кубический сплайн (PCHIP) — плавная кривая через расчётные точки, как лекало */
+  function pchip(x, y) {
+    var n = x.length, h = [], dd = [], m = [], i;
+    for (i = 0; i < n - 1; i++) { h[i] = x[i + 1] - x[i]; dd[i] = (y[i + 1] - y[i]) / h[i]; }
+    m[0] = dd[0]; m[n - 1] = dd[n - 2];
+    for (i = 1; i < n - 1; i++) {
+      if (dd[i - 1] * dd[i] <= 0) m[i] = 0;
+      else { var w1 = 2 * h[i] + h[i - 1], w2 = h[i] + 2 * h[i - 1]; m[i] = (w1 + w2) / (w1 / dd[i - 1] + w2 / dd[i]); }
+    }
+    return function (t) {
+      if (t <= x[0]) return y[0] + m[0] * (t - x[0]);
+      if (t >= x[n - 1]) return y[n - 1] + m[n - 1] * (t - x[n - 1]);
+      var k = 0; while (t > x[k + 1]) k++;
+      var u = (t - x[k]) / h[k], u2 = u * u, u3 = u2 * u;
+      return (2 * u3 - 3 * u2 + 1) * y[k] + (u3 - 2 * u2 + u) * h[k] * m[k] + (-2 * u3 + 3 * u2) * y[k + 1] + (u3 - u2) * h[k] * m[k + 1];
+    };
+  }
+  /* естественный кубический сплайн — плавная ДСО через расчётные точки (l″ = 0 на концах, что верно при θ = 0) */
+  function nspline(x, y) {
+    var n = x.length, h = [], al = [], l = [1], mu = [0], z = [0], c = new Array(n).fill(0), b = [], d = [], i;
+    for (i = 0; i < n - 1; i++) h[i] = x[i + 1] - x[i];
+    for (i = 1; i < n - 1; i++) al[i] = 3 / h[i] * (y[i + 1] - y[i]) - 3 / h[i - 1] * (y[i] - y[i - 1]);
+    for (i = 1; i < n - 1; i++) { l[i] = 2 * (x[i + 1] - x[i - 1]) - h[i - 1] * mu[i - 1]; mu[i] = h[i] / l[i]; z[i] = (al[i] - h[i - 1] * z[i - 1]) / l[i]; }
+    for (i = n - 2; i >= 0; i--) { c[i] = (i < n - 1 && i > 0 ? z[i] - mu[i] * c[i + 1] : 0); if (i === 0) c[0] = 0; b[i] = (y[i + 1] - y[i]) / h[i] - h[i] * (c[i + 1] + 2 * c[i]) / 3; d[i] = (c[i + 1] - c[i]) / (3 * h[i]); }
+    return function (t) {
+      var k = 0; if (t <= x[0]) k = 0; else { while (k < n - 2 && t > x[k + 1]) k++; }
+      var u = t - x[k]; return y[k] + b[k] * u + c[k] * u * u + d[k] * u * u * u;
+    };
+  }
   function sgn(x, d) { return (x < 0 ? "− " : "") + f(Math.abs(x), d); }
   function par(x, d) { return x < 0 ? "(" + f(x, d) + ")" : f(x, d); }
 
@@ -5580,16 +5622,18 @@ var TUS = (function () {
     });
     rows[0].ld = 0;
     for (var i = 1; i < rows.length; i++) rows[i].ld = rows[i - 1].ld + (rows[i - 1].l + rows[i].l) / 2 * (rows[i].a - rows[i - 1].a) / R;
-    return { rows: rows, lk: lk, x: x, method: tanker ? 1 : 2 };
+    var xs = rows.map(function (r) { return r.a; });
+    return { rows: rows, lk: lk, x: x, method: tanker ? 1 : 2, lf: nspline(xs, rows.map(function (r) { return r.l; })) };
   }
-  /* l(θ), ld(θ) — кусочно-линейная ДСО, симметрична относительно θ = 0 */
-  function lAt(S, a) { var sg = a < 0 ? -1 : 1; a = Math.abs(a); return sg * lin(S.rows.map(function (r) { return [r.a, r.l]; }), Math.min(a, 80), 0, 1); }
-  function ldAt(S, a) {
-    a = Math.abs(a); var rs = S.rows;
-    for (var i = 1; i < rs.length; i++) if (a <= rs[i].a + 1e-9) {
-      var p = rs[i - 1], la = lAt(S, a); return p.ld + (p.l + la) / 2 * (a - p.a) / R;
-    }
-    return rs[rs.length - 1].ld;
+  /* l(θ), ld(θ) — плавные кривые через расчётные точки (как проводят ДСО и ДДО по лекалу); ДСО нечётна, ДДО чётна относительно θ = 0 */
+  function lAt(S, a) { var sg = a < 0 ? -1 : 1; a = Math.min(Math.abs(a), 80); return sg * S.lf(a); }
+  function ldAt(S, a) {   /* ld(θ) = ld(θi) из таблицы + ∫ l dθ по плавной ДСО от θi до θ (правило Симпсона) */
+    a = Math.min(Math.abs(a), 80); var rs = S.rows, i = 0;
+    while (i < rs.length - 1 && rs[i + 1].a <= a + 1e-12) i++;
+    var a0 = rs[i].a; if (a - a0 < 1e-9) return rs[i].ld;
+    var n = 8, hh = (a - a0) / n, sum = S.lf(a0) + S.lf(a);
+    for (var k = 1; k < n; k++) sum += (k % 2 ? 4 : 2) * S.lf(a0 + k * hh);
+    return rs[i].ld + sum * hh / 3 / R;
   }
   function roots(fn, a0, a1, step) {    /* корни fn на [a0, a1] */
     var out = [], prev = fn(a0), x0 = a0;
@@ -5641,6 +5685,19 @@ var TUS = (function () {
     txt(g, lab[0], x0 + w + 10, py(0) + 34, { s: 17, a: "right", w: "700" }); txt(g, lab[1], px(Math.max(X[0], 0)) + 10, y0 - 22, { s: 17, a: "left", w: "700" });
     return { px: px, py: py };
   }
+  /* размерная линия со стрелками на концах; подпись — горизонтально у середины (o.side: "l"/"r"/"t"/"b") */
+  function dim(g, x0, y0, x1, y1, label, o) {
+    o = o || {}; var c = o.c || "#111", mx = (x0 + x1) / 2, my = (y0 + y1) / 2, len = Math.hypot(x1 - x0, y1 - y0);
+    if (len < 1) return;
+    var hl = Math.min(11, len / 3);
+    arrow(g, mx, my, x0, y0, { c: c, w: o.w || 1.4, hl: hl }); arrow(g, mx, my, x1, y1, { c: c, w: o.w || 1.4, hl: hl });
+    if (label) {
+      var sd = o.side || "l", off = o.off || 8;
+      var tx = sd === "l" ? mx - off : sd === "r" ? mx + off : mx, ty = sd === "t" ? my - off - 8 : sd === "b" ? my + off + 8 : my + (o.dy || 0);
+      txt(g, label, tx, ty, { s: o.s || 17, a: sd === "l" ? "right" : sd === "r" ? "left" : "center", c: c, w: o.bold ? "700" : "400" });
+    }
+  }
+  function ext(g, x0, y0, x1, y1) { line(g, [[x0, y0], [x1, y1]], { c: "#777", w: 1 }); }   /* выносная линия */
   function curve(g, A, fn, a0, a1, o) { var pts = []; for (var a = a0; a <= a1 + 1e-9; a += 0.5) pts.push([A.px(a), A.py(fn(a))]); line(g, pts, o); }
 
   /* ================== ПР №2. Посадка ================== */
@@ -5705,25 +5762,55 @@ var TUS = (function () {
       answer: m >= 0 ? "переместить " + f(m, 1) + " т из «" + from.name + "» в «" + to.name + "»" + (m > from.m ? " (больше, чем есть в помещении — выберите другие помещения)" : "") : "переместить " + f(-m, 1) + " т из «" + to.name + "» в «" + from.name + "»" };
   }
   function drawHull(cvs, plan, d, res) {
-    var c = res.c, sh = c.sh, L = c.L, W = 1500, H = 760, g = cv(cvs, W, H);
-    var sx = 1250 / (L * 1.1), sy = Math.min(38, 420 / sh.D), x0 = 125, yB = 560;
-    function X(x) { return x0 + (x + L * 0.55) * sx; } function Y(z) { return yB - z * sy; }
-    var ap = -L / 2, fp = L / 2, D = sh.D;
-    line(g, [[X(ap - L * 0.04), Y(D * 1.05)], [X(ap - L * 0.03), Y(D * 0.35)], [X(ap + L * 0.03), Y(0.25 * D)], [X(ap + L * 0.06), Y(0)], [X(fp - L * 0.05), Y(0)], [X(fp - L * 0.01), Y(D * 0.35)], [X(fp + L * 0.035), Y(D * 1.05)]], { w: 3, close: true, fill: "#eef3f7" });
-    [ap, 0, fp].forEach(function (x, i) { line(g, [[X(x), Y(-1.2)], [X(x), Y(D * 1.15)]], { c: "#555", w: 1.5, dash: [10, 6] }); txt(g, ["КП (A.P.)", "⊗ мидель", "НП (F.P.)"][i], X(x), Y(D * 1.15) - 14, { s: 16 }); });
-    line(g, [[X(ap - L * 0.05), Y(0)], [X(fp + L * 0.05), Y(0)]], { c: "#333", w: 1 }); txt(g, "ОП", X(fp + L * 0.05) + 8, Y(0), { s: 15, a: "left" });
-    var wl = function (x) { return c.dk + (x - ap) * c.Df / L; }, xa = ap - L * 0.06, xb = fp + L * 0.06;
-    line(g, [[X(xa), Y(wl(xa))], [X(xb), Y(wl(xb))]], { c: "#1b6fb3", w: 3 });
-    txt(g, "ВЛ", X(xb) + 8, Y(wl(xb)), { s: 16, a: "left", c: "#1b6fb3", w: "700" });
-    arrow(g, X(fp) + 26, Y(0), X(fp) + 26, Y(c.dn), { c: "#c0392b", w: 2 }); txt(g, "dн = " + f(c.dn, 3) + " м", X(fp) + 34, Y(c.dn / 2), { s: 17, a: "left", c: "#c0392b", w: "700" });
-    arrow(g, X(ap) - 26, Y(0), X(ap) - 26, Y(c.dk), { c: "#c0392b", w: 2 }); txt(g, "dк = " + f(c.dk, 3) + " м", X(ap) - 34, Y(c.dk / 2), { s: 17, a: "right", c: "#c0392b", w: "700" });
-    var xmf = fp + c.mk.lf, xma = ap + c.mk.la;
-    [[xmf, c.dn1, "d′н = " + f(c.dn1, 3)], [xma, c.dk1, "d′к = " + f(c.dk1, 3)]].forEach(function (q) { line(g, [[X(q[0]), Y(0)], [X(q[0]), Y(q[1] + 1)]], { c: "#8e44ad", w: 2 }); txt(g, q[2], X(q[0]), Y(q[1] + 1) - 12, { s: 15, c: "#8e44ad" }); });
-    dot(g, X(c.hy.Xf), Y(wl(c.hy.Xf)), 6, "#1b6fb3"); txt(g, "F", X(c.hy.Xf) + 10, Y(wl(c.hy.Xf)) - 12, { s: 17, a: "left", w: "700" });
-    dot(g, X(c.r1.XG), Y(c.ZG), 6); txt(g, "G", X(c.r1.XG) + 10, Y(c.ZG) - 10, { s: 17, a: "left", w: "700" });
-    dot(g, X(c.hy.Xc), Y(c.hy.Zc), 6, "#27ae60"); txt(g, "C", X(c.hy.Xc) + 10, Y(c.hy.Zc) + 12, { s: 17, a: "left", w: "700" });
-    txt(g, "Df = " + f(c.Df, 3) + " м;  dср = " + f(c.dm, 3) + " м;  XF = " + f(c.hy.Xf, 3) + " м;  XC = " + f(c.hy.Xc, 3) + " м;  XG = " + f(c.r1.XG, 3) + " м;  ZG = " + f(c.ZG, 3) + " м", W / 2, 690, { s: 18 });
-    txt(g, "Масштаб: по вертикали 1:100, по горизонтали 1:" + (sh.type === "tanker" ? 400 : 600) + " (при печати в размер листа)", W / 2, 726, { s: 15, c: "#555" });
+    /* Схема корпуса в продольном направлении (как рис. 2 методички): по вертикали 1:100, по горизонтали 1:600 (танкер 1:400) */
+    var c = res.c, sh = c.sh, L = c.L, D = sh.D, tank = sh.type === "tanker", PX = 45;          /* PX — пикселей на 1 см листа */
+    var sy = PX * 100 / 100, sx = PX * 100 / (tank ? 400 : 600);
+    var W = Math.round(1.16 * L * sx + 150), yB = Math.round(70 + D * 1.12 * sy), H = yB + 205, g = cv(cvs, W, H);
+    cvs._cm = W / PX;
+    var cx = W / 2;
+    function X(x) { return cx + x * sx; } function Y(z) { return yB - z * sy; }
+    var ap = -L / 2, fp = L / 2, wl = function (x) { return c.dk + (x - ap) * c.Df / L; };
+    /* корпус */
+    line(g, [[X(ap - 0.045 * L), Y(D)], [X(ap - 0.042 * L), Y(0.62 * D)], [X(ap - 0.005 * L), Y(0.42 * D)], [X(ap + 0.012 * L), Y(0.12 * D)], [X(ap + 0.03 * L), Y(0)],
+      [X(fp - 0.045 * L), Y(0)], [X(fp - 0.004 * L), Y(0.3 * D)], [X(fp + 0.04 * L), Y(D)]], { w: 2.5, close: true });
+    /* основная плоскость, перпендикуляры, мидель */
+    line(g, [[X(ap - 0.08 * L), Y(0)], [X(fp + 0.08 * L), Y(0)]], { c: "#111", w: 1.2 }); txt(g, "ОП", X(fp + 0.08 * L) + 6, Y(0), { s: 16, a: "left" });
+    [[ap, "КП"], [0, "⊗"], [fp, "НП"]].forEach(function (q) { line(g, [[X(q[0]), Y(-0.9)], [X(q[0]), Y(D * 1.1)]], { c: "#444", w: 1.2, dash: [14, 5, 3, 5] }); txt(g, q[1], X(q[0]), Y(D * 1.1) - 16, { s: q[1] === "⊗" ? 22 : 18, w: "700" }); });
+    /* ватерлиния */
+    var xa = ap - 0.075 * L, xb = fp + 0.075 * L;
+    line(g, [[X(xa), Y(wl(xa))], [X(xb), Y(wl(xb))]], { c: "#1b6fb3", w: 2.5 }); txt(g, "ВЛ", X(xb) + 6, Y(wl(xb)), { s: 17, a: "left", c: "#1b6fb3", w: "700" });
+    /* марки углублений: шкала через 0,2 м, цифры через 1 м */
+    var top = Math.min(Math.floor(D), Math.ceil(Math.max(c.dn1, c.dk1, c.dm) + 1.5));
+    function scale(x, side) {
+      line(g, [[X(x), Y(0)], [X(x), Y(top)]], { c: "#555", w: 1.2 });
+      for (var z = 0; z <= top + 1e-9; z += 0.2) {
+        var big = Math.abs(z - Math.round(z)) < 1e-6, L0 = big ? 12 : 6;
+        line(g, [[X(x), Y(z)], [X(x) + side * L0, Y(z)]], { c: "#555", w: 1.2 });
+        if (big && z >= 1 && Math.round(z) % 1 === 0 && (Math.round(z) % 2 === 0 || top <= 12)) txt(g, String(Math.round(z)), X(x) + side * 16, Y(z), { s: 12, a: side > 0 ? "left" : "right", c: "#555" });
+      }
+    }
+    var xm = ap + c.mk.la, xn = fp + c.mk.lf;
+    scale(xm, 1); scale(xn, -1); scale(0, 1);
+    /* осадки на перпендикулярах и марках */
+    dim(g, X(ap) - 16, Y(0), X(ap) - 16, Y(c.dk), "dк", { side: "l", c: "#c0392b", bold: true, off: 6 });
+    dim(g, X(fp) + 16, Y(0), X(fp) + 16, Y(c.dn), "dн", { side: "r", c: "#c0392b", bold: true, off: 6 });
+    dim(g, X(xm) + 44, Y(-c.mk.tk), X(xm) + 44, Y(wl(xm)), "d′к", { side: "r", c: "#8e44ad", bold: true, off: 6 });
+    dim(g, X(xn) - 44, Y(-c.mk.tk), X(xn) - 44, Y(wl(xn)), "d′н", { side: "l", c: "#8e44ad", bold: true, off: 6 });
+    dim(g, X(0) - 70, Y(0), X(0) - 70, Y(wl(0)), "dср", { side: "l", c: "#c0392b", bold: true, off: 6 });
+    /* отстояния марок и длина */
+    var yl = Y(0) + 44, yL = Y(0) + 96;
+    ext(g, X(ap), Y(-0.9), X(ap), yL + 8); ext(g, X(fp), Y(-0.9), X(fp), yL + 8); ext(g, X(xm), Y(0), X(xm), yl + 8); ext(g, X(xn), Y(0), X(xn), yl + 8);
+    dim(g, X(ap), yl, X(xm), yl, "lк", { side: "b", s: 16 }); dim(g, X(xn), yl, X(fp), yl, "lн", { side: "b", s: 16 });
+    dim(g, X(ap), yL, X(fp), yL, "L = " + f(L, 2) + " м", { side: "b", s: 16 });
+    /* F, G, C */
+    dot(g, X(c.hy.Xf), Y(wl(c.hy.Xf)), 6, "#1b6fb3"); txt(g, "F", X(c.hy.Xf) - 10, Y(wl(c.hy.Xf)) - 14, { s: 18, a: "right", w: "700", c: "#1b6fb3" });
+    dot(g, X(c.r1.XG), Y(c.ZG), 6); txt(g, "G", X(c.r1.XG) - 12, Y(c.ZG) - 4, { s: 18, a: "right", w: "700" });
+    dot(g, X(c.hy.Xc), Y(c.hy.Zc), 6, "#27ae60"); txt(g, "C", X(c.hy.Xc) - 12, Y(c.hy.Zc) - 4, { s: 18, a: "right", w: "700", c: "#27ae60" });
+    /* значения */
+    var y0 = yB + 140;
+    txt(g, "dн = " + f(c.dn, 3) + " м;   dк = " + f(c.dk, 3) + " м;   dср = " + f(c.dm, 3) + " м;   Df = " + f(c.Df, 3) + " м;   d′н = " + f(c.dn1, 3) + " м;   d′к = " + f(c.dk1, 3) + " м", W / 2, y0, { s: 18 });
+    txt(g, "lн = " + f(c.mk.lf, 2) + " м;   lк = " + f(c.mk.la, 2) + " м;   XF = " + f(c.hy.Xf, 3) + " м;   XC = " + f(c.hy.Xc, 3) + " м;   ZC = " + f(c.hy.Zc, 3) + " м;   XG = " + f(c.r1.XG, 3) + " м;   ZG = " + f(c.ZG, 3) + " м", W / 2, y0 + 27, { s: 18 });
+    txt(g, "Масштаб: по вертикали 1:100, по горизонтали 1:" + (tank ? 400 : 600), W / 2, y0 + 53, { s: 15, c: "#555" });
   }
 
   /* ================== ПР №3. Плавучий кран ================== */
@@ -5762,24 +5849,34 @@ var TUS = (function () {
         answer: "h = " + f(p.h, 2) + " м; H = " + f(p.H, 2) + " м", figs: ["tr", "lg"] }];
   }
   function drawCrane(cvs, which, p) {
-    var W = 1400, H = 900, g = cv(cvs, W, H), trans = which === "tr";
-    var span = trans ? p.B : p.L, top = trans ? p.Zm : p.ZM;
-    var sy = Math.min(560 / Math.max(top, p.Dp * 1.5), 30), sx = Math.min(900 / span, sy * 3);
-    var x0 = 150, yB = 780;
-    function X(x) { return x0 + x * sx; } function Y(z) { return yB - z * sy; }
-    if (sy * top > 720) { sy = 700 / top; }
-    line(g, [[X(0), Y(0)], [X(span), Y(0)], [X(span), Y(p.Dp)], [X(0), Y(p.Dp)]], { w: 3, close: true, fill: "#eef3f7" });
-    line(g, [[X(-span * 0.08), Y(p.d)], [X(span * 1.08), Y(p.d)]], { c: "#1b6fb3", w: 3 }); txt(g, "ВЛ", X(span * 1.08) + 8, Y(p.d), { s: 17, a: "left", c: "#1b6fb3", w: "700" });
-    var xc = X(span / 2);
-    line(g, [[xc, Y(-0.5)], [xc, Y(top) - 20]], { c: "#555", w: 1.5, dash: [12, 6] });
-    dot(g, xc, Y(p.Zc), 6, "#27ae60"); txt(g, "C (Zc = " + f(p.Zc, 2) + ")", xc + 14, Y(p.Zc), { s: 17, a: "left" });
-    dot(g, xc, Y(p.ZG), 6); txt(g, "G (ZG = " + f(p.ZG, 2) + ")", xc + 14, Y(p.ZG) - 4, { s: 17, a: "left" });
-    dot(g, xc, Y(top), 6, "#c0392b"); txt(g, (trans ? "m (Zm = " : "M (ZM = ") + f(top, 2) + ")", xc + 14, Y(top), { s: 17, a: "left", c: "#c0392b", w: "700" });
-    arrow(g, X(span) + 40, Y(0), X(span) + 40, Y(p.d), { c: "#1b6fb3" }); txt(g, "d = " + f(p.d, 2) + " м", X(span) + 48, Y(p.d / 2), { s: 17, a: "left" });
-    arrow(g, xc - 30, Y(p.ZG), xc - 30, Y(top), { c: "#c0392b" }); txt(g, (trans ? "h = " + f(p.h, 2) : "H = " + f(p.H, 2)) + " м", xc - 38, Y((p.ZG + top) / 2), { s: 18, a: "right", c: "#c0392b", w: "700" });
-    arrow(g, xc - 90, Y(p.Zc), xc - 90, Y(top), { c: "#27ae60" }); txt(g, (trans ? "r = " + f(p.r, 2) : "R = " + f(p.R, 2)) + " м", xc - 98, Y((p.Zc + top) / 2) + 26, { s: 17, a: "right", c: "#27ae60" });
-    txt(g, trans ? "Поперечное сечение (B = " + f(p.B, 0) + " м), масштаб 1:200" : "Продольное сечение (L = " + f(p.L, 0) + " м), масштаб 1:300", W / 2, 40, { s: 22, w: "700" });
-    txt(g, "Масштаб по высоте на схеме уменьшен, чтобы поместился метацентр; размеры подписаны.", W / 2, 860, { s: 15, c: "#666" });
+    /* Сечения плавкрана в истинном масштабе: поперечное 1:200, продольное 1:300 (одинаковый масштаб по обеим осям) */
+    var trans = which === "tr", span = trans ? p.B : p.L, top = trans ? p.Zm : p.ZM;
+    var PX = 60, s = PX * 100 / (trans ? 200 : 300), mg = 10;          /* PX — пикселей на 1 см листа; s — пикселей на 1 м */
+    var W = Math.round(span * s + 2 * mg), yB = Math.round(62 + Math.max(top, p.Dp) * s), H = yB + 95, g = cv(cvs, W, H);
+    cvs._cm = W / PX;
+    var cx = W / 2, hx = span / 2;
+    function X(x) { return cx + x * s; } function Y(z) { return yB - z * s; }
+    line(g, [[X(-hx), Y(0)], [X(hx), Y(0)], [X(hx), Y(p.Dp)], [X(-hx), Y(p.Dp)]], { w: 2.5, close: true });
+    line(g, [[4, Y(0)], [W - 4, Y(0)]], { c: "#111", w: 1.2 }); txt(g, "ОП", mg + 8, Y(0) - 12, { s: 15, a: "left" });
+    line(g, [[4, Y(p.d)], [W - 4, Y(p.d)]], { c: "#1b6fb3", w: 2.5 }); txt(g, "ВЛ", mg + 8, Y(p.d) - 12, { s: 15, a: "left", c: "#1b6fb3", w: "700" });
+    line(g, [[cx, Y(0) + 14], [cx, Y(top) - 26]], { c: "#444", w: 1.2, dash: [14, 5, 3, 5] }); txt(g, trans ? "ДП" : "⊗", cx, Y(top) - 40, { s: 17, w: "700" });
+    var mN = trans ? "m" : "M", zN = trans ? "Zm" : "ZM";
+    dot(g, cx, Y(top), 6, "#c0392b"); txt(g, mN, cx + 12, Y(top) - 4, { s: 22, a: "left", w: "700", c: "#c0392b" });
+    dot(g, cx, Y(p.ZG), 6); txt(g, "G", cx + 10, Y(p.ZG) + 17, { s: 19, a: "left", w: "700" });
+    dot(g, cx, Y(p.Zc), 6, "#27ae60"); txt(g, "C", cx + 10, Y(p.Zc) + 17, { s: 19, a: "left", w: "700", c: "#27ae60" });
+    /* слева от ДП — аппликаты от основной плоскости */
+    var st = Math.min(60, (hx * s - 40) / 3.5);
+    [[p.Zc, "Zc"], [p.ZG, "ZG"], [top, zN]].forEach(function (q, i) {
+      var x = cx - 40 - (2 - i) * st; ext(g, x, Y(q[0]), cx - 8, Y(q[0])); dim(g, x, Y(0), x, Y(q[0]), q[1], { side: "l", off: 4, bold: true, s: 16 });
+    });
+    /* справа от ДП — r (R) и h (H); у борта — осадка d */
+    ext(g, cx + 8, Y(p.Zc), cx + 60, Y(p.Zc)); ext(g, cx + 8, Y(p.ZG), cx + 60 + st, Y(p.ZG)); ext(g, cx + 8, Y(top), cx + 60 + st, Y(top));
+    dim(g, cx + 50, Y(p.Zc), cx + 50, Y(top), trans ? "r" : "R", { side: "r", off: 5, bold: true, c: "#27ae60", s: 18 });
+    dim(g, cx + 50 + st, Y(p.ZG), cx + 50 + st, Y(top), trans ? "h" : "H", { side: "r", off: 5, bold: true, c: "#c0392b", s: 18, dy: 30 });
+    dim(g, X(hx) - 18, Y(0), X(hx) - 18, Y(p.d), "d", { side: "l", off: 4, bold: true, c: "#1b6fb3", s: 16 });
+    var yv = yB + 40;
+    txt(g, "Zc = " + f(p.Zc, 2) + " м;  ZG = " + f(p.ZG, 2) + " м;  d = " + f(p.d, 2) + " м", W / 2, yv, { s: 17 });
+    txt(g, (trans ? "r = " + f(p.r, 2) + " м;  Zm = " + f(p.Zm, 2) + " м;  h = " + f(p.h, 2) + " м" : "R = " + f(p.R, 2) + " м;  ZM = " + f(p.ZM, 2) + " м;  H = " + f(p.H, 2) + " м") + ";  М " + (trans ? "1:200" : "1:300"), W / 2, yv + 28, { s: 17 });
   }
 
   /* ================== ПР №4. МЦВ ================== */
@@ -5820,28 +5917,57 @@ var TUS = (function () {
     return { name: k[0], m: k[1], hn: k[2] };
   }
   function drawMom(cvs, plan, dd, res) {
-    var c = res.c, sh = c.sh, W = 1400, H = 980, g = cv(cvs, W, H), t = 10 / R;
-    var B = sh.B, top = Math.max(c.hy.Zm, sh.D) * 1.08, s = Math.min(1000 / (B * 1.35), 760 / (top * 1.1)), cx = W / 2, yB = 870;
-    function P(y, z) { return [cx + (y * Math.cos(t) + z * Math.sin(t)) * s, yB - (-y * Math.sin(t) + z * Math.cos(t)) * s]; }
-    line(g, [P(-B / 2, sh.D), P(-B / 2, 0.15 * sh.D), P(-B / 2 + 0.08 * B, 0), P(B / 2 - 0.08 * B, 0), P(B / 2, 0.15 * sh.D), P(B / 2, sh.D)], { w: 3, close: true, fill: "#eef3f7" });
-    var wy = P(0, c.dm)[1];
-    line(g, [[cx - B * 0.8 * s, wy], [cx + B * 0.8 * s, wy]], { c: "#1b6fb3", w: 3 }); txt(g, "ВЛ₁", cx + B * 0.8 * s + 8, wy, { s: 17, a: "left", c: "#1b6fb3", w: "700" });
-    line(g, [P(0, -0.8), P(0, top)], { c: "#555", w: 1.5, dash: [12, 6] }); var dp = P(0, top); txt(g, "ДП", dp[0] + 8, dp[1] - 12, { s: 16, a: "left" });
-    line(g, [[P(0, 0)[0], yB + 20], [P(0, 0)[0], P(0, top)[1]]], { c: "#aaa", w: 1, dash: [3, 5] });
-    var m = P(0, c.hy.Zm), G = P(0, c.ZG1), C0 = P(0, c.hy.Zc), C1 = [m[0], C0[1]], K = [m[0], G[1]];
-    dot(g, m[0], m[1], 6, "#c0392b"); txt(g, "m", m[0] + 12, m[1] - 8, { s: 22, a: "left", c: "#c0392b", w: "700" });
-    dot(g, G[0], G[1], 6); txt(g, "G", G[0] - 12, G[1] - 10, { s: 22, a: "right", w: "700" });
-    dot(g, C0[0], C0[1], 5, "#27ae60"); txt(g, "C", C0[0] - 12, C0[1] + 4, { s: 20, a: "right", w: "700", c: "#27ae60" });
-    dot(g, C1[0], C1[1], 6, "#27ae60"); txt(g, "C₁", C1[0] + 12, C1[1] + 4, { s: 20, a: "left", w: "700", c: "#27ae60" });
-    line(g, [C1, m], { c: "#27ae60", w: 1.5, dash: [6, 5] });
-    arrow(g, G[0], G[1], G[0], G[1] + 150, { w: 3 }); txt(g, "P = Δg", G[0] - 10, G[1] + 150, { s: 17, a: "right" });
-    arrow(g, C1[0], C1[1], C1[0], C1[1] - 150, { w: 3, c: "#27ae60" }); txt(g, "γ∇", C1[0] + 10, C1[1] - 140, { s: 17, a: "left", c: "#27ae60" });
-    line(g, [G, K], { c: "#8e44ad", w: 3 }); dot(g, K[0], K[1], 4, "#8e44ad"); txt(g, "K", K[0] + 10, K[1] + 14, { s: 18, a: "left", c: "#8e44ad", w: "700" });
-    txt(g, "l = GK = h·sin θ = " + f(c.h * Math.sin(t), 3) + " м", (G[0] + K[0]) / 2, G[1] - 22, { s: 17, c: "#8e44ad", w: "700" });
-    arrow(g, m[0] - 40, G[1], m[0] - 40, m[1], { c: "#c0392b", w: 2 }); txt(g, "h = " + f(c.h, 3), m[0] - 48, (G[1] + m[1]) / 2, { s: 17, a: "right", c: "#c0392b" });
-    txt(g, "θ = 10°", cx - B * 0.55 * s, yB - 30, { s: 20, w: "700" });
-    txt(g, "Восстанавливающий момент при крене 10°: Mв = Δ·h·sin θ = " + f(c.D * c.h * Math.sin(t), 0) + " тм", W / 2, 36, { s: 21, w: "700" });
-    txt(g, "Zm = " + f(c.hy.Zm, 2) + " м;  Z′G = " + f(c.ZG1, 2) + " м;  Zc = " + f(c.hy.Zc, 2) + " м;  h = " + f(c.h, 3) + " м;  масштаб 1:100 (при печати в размер листа)", W / 2, 948, { s: 16, c: "#444" });
+    /* Схема возникновения восстанавливающего момента при крене 10° (масштаб 1:100) — как в тетради: ДП, ОП, ВЛ0 и ВЛ1, точки m, G, G′, C, C1, плечо l */
+    var c = res.c, t = 10 / R, sn = Math.sin(t), cs = Math.cos(t), Zm = c.hy.Zm, Zc = c.hy.Zc, ZG = c.ZG, ZG1 = c.ZG1, d = c.dm;
+    var r = Zm - Zc, yC1 = r * sn, zC1 = Zm - r * cs, l = (Zm - ZG1) * sn;
+    var PX = 60, s = PX, top = Math.max(Zm, d) + 1.2;          /* 1:100 → 1 м = 1 см листа = PX пикселей */
+    var W = 900, yB = Math.round(60 + top * s), H = yB + 150, g = cv(cvs, W, H), cx = 470;
+    cvs._cm = W / PX;
+    function P(y, z) { return [cx + y * s, yB - z * s]; }
+    /* ОП, ДП */
+    line(g, [P(-5.2, 0), P(6.3, 0)], { w: 1.5 }); txt(g, "ОП", P(6.3, 0)[0] + 6, P(0, 0)[1], { s: 15, a: "left" });
+    line(g, [P(0, -0.3), P(0, top)], { c: "#444", w: 1.2, dash: [14, 5, 3, 5] }); txt(g, "ДП", P(0, top)[0], P(0, top)[1] - 14, { s: 15, w: "700" });
+    /* ватерлинии: ВЛ0 и ВЛ1 через точку F на ДП */
+    var F = P(0, d), e = 4.6;
+    line(g, [P(-e, d), P(e + 1.2, d)], { c: "#1b6fb3", w: 1.5, dash: [8, 5] }); txt(g, "ВЛ0", P(-e, d)[0] - 6, P(0, d)[1], { s: 15, a: "right", c: "#1b6fb3" });
+    line(g, [P(-e * cs, d - e * sn), P((e + 1.2) * cs, d + (e + 1.2) * sn)], { c: "#1b6fb3", w: 2.5 }); var w1 = P((e + 1.2) * cs, d + (e + 1.2) * sn); txt(g, "ВЛ1", w1[0] + 6, w1[1] - 4, { s: 15, a: "left", c: "#1b6fb3", w: "700" });
+    g.beginPath(); g.arc(F[0], F[1], 2.4 * s, -t, 0); g.strokeStyle = "#1b6fb3"; g.lineWidth = 1.2; g.stroke();
+    txt(g, "10°", F[0] + 2.5 * s + 4, F[1] - 0.2 * s, { s: 15, a: "left", c: "#1b6fb3" });
+    dot(g, F[0], F[1], 4, "#1b6fb3"); txt(g, "F", F[0] - 8, F[1] - 12, { s: 17, a: "right", w: "700", c: "#1b6fb3" });
+    /* линии действия сил — перпендикулярно ВЛ1 */
+    var nv = [-sn, cs];
+    function along(y, z, k) { return P(y + nv[0] * k, z + nv[1] * k); }
+    line(g, [along(yC1, zC1, -1.2), along(yC1, zC1, r + 1.4)], { c: "#27ae60", w: 1.5 });
+    line(g, [along(0, ZG1, -2.3), along(0, ZG1, 1.2)], { c: "#111", w: 1.2, dash: [6, 4] });
+    var gs = along(0, ZG1, 0), ge = along(0, ZG1, -1.9); arrow(g, gs[0], gs[1], ge[0], ge[1], { w: 3, hl: 14 }); var gm = along(0, ZG1, -1.1); txt(g, "Δg", gm[0] - 12, gm[1], { s: 17, a: "right", w: "700" });
+    var bs = along(yC1, zC1, 0), be = along(yC1, zC1, 1.6); arrow(g, bs[0], bs[1], be[0], be[1], { w: 3, hl: 14, c: "#27ae60" }); var bm = along(yC1, zC1, 0.8); txt(g, "∇ρg", bm[0] + 12, bm[1], { s: 17, a: "left", w: "700", c: "#27ae60" });
+    /* точки */
+    var M = P(0, Zm), G0 = P(0, ZG), G1 = P(0, ZG1), C0 = P(0, Zc), C1 = P(yC1, zC1);
+    dot(g, M[0], M[1], 6, "#c0392b"); txt(g, "m", M[0] - 10, M[1] - 12, { s: 21, a: "right", w: "700", c: "#c0392b" });
+    dot(g, G1[0], G1[1], 5.5); txt(g, "G′", G1[0] - 10, G1[1] - 10, { s: 18, a: "right", w: "700" });
+    dot(g, G0[0], G0[1], 5.5); txt(g, "G", G0[0] - 10, G0[1] + 12, { s: 18, a: "right", w: "700" });
+    dot(g, C0[0], C0[1], 5.5, "#27ae60"); txt(g, "C", C0[0] - 10, C0[1] + 4, { s: 18, a: "right", w: "700", c: "#27ae60" });
+    dot(g, C1[0], C1[1], 5.5, "#27ae60"); txt(g, "C1", C1[0] + 10, C1[1] + 12, { s: 18, a: "left", w: "700", c: "#27ae60" });
+    /* плечо статической остойчивости l — перпендикуляр от G′ к линии действия силы плавучести */
+    var K = P(l * cs, ZG1 + l * sn);
+    dim(g, G1[0], G1[1], K[0], K[1], "", { c: "#8e44ad", w: 2 });
+    txt(g, "l", (G1[0] + K[0]) / 2 + 4, (G1[1] + K[1]) / 2 - 16, { s: 20, w: "700", c: "#8e44ad" });
+    /* размеры от ОП (слева) */
+    [[Zc, "Zc"], [ZG, "ZG"], [ZG1, "Z′G"], [Zm, "Zm"]].forEach(function (q, i) {
+      var x = cx - 330 + i * 60; ext(g, x - 4, P(0, q[0])[1], cx - 10, P(0, q[0])[1]);
+      dim(g, x, P(0, 0)[1], x, P(0, q[0])[1], q[1], { side: "l", off: 3, bold: true, s: 15 });
+    });
+    /* справа: ZC1, h0, h */
+    var xr = cx + 175;
+    ext(g, C1[0] + 8, C1[1], xr + 6, C1[1]); dim(g, xr, P(0, 0)[1], xr, C1[1], "ZC1", { side: "r", off: 4, bold: true, s: 15, c: "#27ae60" });
+    ext(g, M[0] + 8, M[1], xr + 120, M[1]); ext(g, G0[0] + 8, G0[1], xr + 120, G0[1]); ext(g, G1[0] + 8, G1[1], xr + 64, G1[1]);
+    dim(g, xr + 60, G1[1], xr + 60, M[1], "h", { side: "r", off: 4, bold: true, s: 17, c: "#c0392b" });
+    dim(g, xr + 115, G0[1], xr + 115, M[1], "h0", { side: "r", off: 4, bold: true, s: 17, c: "#c0392b", dy: 24 });
+    /* подписи значений */
+    var y0 = yB + 50;
+    txt(g, "Zm = " + f(Zm, 2) + " м;  Zc = " + f(Zc, 2) + " м;  ZC1 = " + f(zC1, 2) + " м;  ZG = " + f(ZG, 2) + " м;  Z′G = " + f(ZG1, 2) + " м", W / 2, y0, { s: 16 });
+    txt(g, "h0 = " + f(c.h0, 3) + " м;  h = " + f(c.h, 3) + " м;  l = h·sin 10° = " + f(l, 3) + " м", W / 2, y0 + 26, { s: 16 });
+    txt(g, "Mв = Δ·l = " + f(c.D, 1) + "·" + f(l, 3) + " = " + f(c.D * l, 0) + " тм;   М 1:100", W / 2, y0 + 54, { s: 16, w: "700" });
   }
 
   /* ================== ПР №5. ДСО и ДДО ================== */
@@ -5863,13 +5989,13 @@ var TUS = (function () {
         paras: ["Моменты от перетекания жидкости Mi (м⁴) выбраны из таблиц поправок на свободную поверхность Информации по уровню груза в каждом танке и умножены на плотность груза. Для танков запасов (моментов по углам крена в Информации нет) принята поправка δmh·sin θ."],
         tables: [{ headers: fh, rows: fr, widths: [4.6, 1].concat([1.4, 1.4, 1.4, 1.4, 1.4, 1.4, 1.4, 1.4]), size: 8 }] });
     } else {
-      H1 = ["θ, °", "sin θ", "ZG·sin θ, м", "lк, м", "lк − Z′G·sin θ = l, м", "ld, м·рад"];
-      rows = S.rows.map(function (r) { return [String(r.a), f(r.s, 3), f(r.zs, 3), f(r.lk, 3), f(r.l, 3), f(r.ld, 4)]; });
+      H1 = ["θ, °", "sin θ", "ZG·sin θ, м", "Z′G·sin θ, м", "lк, м", "l = lк − Z′G·sin θ, м", "ld, м·рад"];
+      rows = S.rows.map(function (r) { return [String(r.a), f(r.s, 3), f(r.zs, 3), f(r.z1s, 3), f(r.lk, 3), f(r.l, 3), f(r.ld, 4)]; });
       s.push({ no: 2, noLabel: "", title: "Учёт свободных поверхностей (способ №2)", lines: ["l = lк − (ZG + mh/Δ)·sin θ = lк − Z′G·sin θ,  Z′G = " + f(c.ZG, 3) + " + " + f(c.mh, 1) + "/" + f(c.D, 1) + " = " + f(c.ZG1, 3) + " м"] });
     }
     s.push({ no: 3, noLabel: "", title: "Плечи статической и динамической остойчивости",
       lines: ["ld(i+1) = ld(i) + (l(i) + l(i+1))/2 · (θ(i+1) − θ(i))/57,3"],
-      tables: [{ headers: H1, rows: rows, widths: m1 ? [1.2, 1.5, 2.2, 2, 2, 3.8, 2.4] : [1.4, 1.8, 2.6, 2.4, 4.6, 2.6] }],
+      tables: [{ headers: H1, rows: rows, widths: [1.2, 1.5, 2.2, 2.2, 2, 3.6, 2.4] }],
       figs: ["dso", "ddo"] });
     var mx = lmax(S, 80), zero = roots(function (a) { return lAt(S, a); }, 1, 80, 0.5);
     s.push({ no: 4, noLabel: "", title: "Характеристики диаграммы", lines: ["lmax = " + f(mx.l, 3) + " м при θmax = " + f(mx.a, 1) + "°", zero.length ? "угол заката ДСО θзак = " + f(zero[0], 1) + "°" : "угол заката ДСО — более 80°",
@@ -5936,9 +6062,9 @@ var TUS = (function () {
     s.push({ no: 4, noLabel: "4. ", title: "Минимальный опрокидывающий момент от шквала", paras: ["По ДДО: касательная из начала координат к ДДО" + (p.TF.v ? " (в пределах угла заливания)" : "") + "; её ордината при θ = 57,3° равна плечу lопр.дин."],
       lines: ["точка касания θ = " + f(p.t4.a, 1) + "°;  lопр.дин = ld(θ)·57,3/θ = " + f(p.t4.l, 3) + " м", "Mопр.дин = Δ·lопр.дин = " + f(c.D, 1) + "·" + f(p.t4.l, 3) + " = " + f(p.M4, 0) + " тм"],
       answer: "lопр = " + f(p.t4.l, 3) + " м; Mопр = " + f(p.M4, 0) + " тм" });
-    s.push({ no: 5, noLabel: "5. ", title: "Опрокидывающий момент от шквала при бортовой качке θr = " + f(p.tr, 0) + "°", paras: ["Судно накренилось на наветренный (левый) борт на θr = " + f(p.tr, 0) + "°, шквал налетает с этого же борта. На ДДО начало отсчёта переносится в точку (−θr; ld(θr)); из неё проводится касательная к ДДО."],
+    s.push({ no: 5, noLabel: "5. ", title: "Опрокидывающий момент от шквала при бортовой качке θr = " + f(p.tr, 0) + "°", paras: ["Судно накренилось на наветренный (левый) борт на θr = " + f(p.tr, 0) + "°, шквал налетает с этого же борта. По ДСО: ДСО продолжается в область отрицательных углов; горизонталь lопр проводится так, чтобы площадь S1 (работа шквала сверх восстанавливающего момента от −θr до пересечения с ДСО) равнялась площади S2 (запас работы восстанавливающего момента от пересечения до " + (p.TF.v ? "угла заливания θf" : "80°") + "). Расчётно это то же, что касательная к ДДО из точки (−θr; ld(θr)): lопр = (ld(θ) − ld(θr))·57,3/(θ + θr)."],
       lines: ["ld(" + f(p.tr, 0) + "°) = " + f(ldAt(S, p.tr), 4) + " м·рад;  точка касания θ = " + f(p.t5.a, 1) + "°", "lопр = (ld(θ) − ld(θr))·57,3/(θ + θr) = " + f(p.t5.l, 3) + " м", "Mопр = Δ·lопр = " + f(p.M5, 0) + " тм"],
-      answer: "lопр = " + f(p.t5.l, 3) + " м; Mопр = " + f(p.M5, 0) + " тм", figs: ["ddo6r"] });
+      answer: "lопр = " + f(p.t5.l, 3) + " м; Mопр = " + f(p.M5, 0) + " тм", figs: ["dso6r"] });
     return s;
   }
 
@@ -5993,6 +6119,96 @@ var TUS = (function () {
     s.push({ no: 6, noLabel: "", title: "Критерий погоды", lines: ["K = b/a = " + f(p.b, 4) + "/" + f(p.a, 4) + " = " + f(p.K, 2)],
       answer: "K = " + f(p.K, 2) + (p.K >= 1 ? " ≥ 1 — остойчивость по критерию погоды достаточна" : " < 1 — остойчивость по критерию погоды недостаточна") });
     return s;
+  }
+
+  /* ---------- ПР №6, №7: чертежи ---------- */
+  function hatch(g, pts, col, fill) {
+    g.save(); g.beginPath(); pts.forEach(function (p, i) { i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]); }); g.closePath();
+    g.fillStyle = fill; g.fill(); g.clip();
+    var xs = pts.map(function (p) { return p[0]; }), ys = pts.map(function (p) { return p[1]; });
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs), y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+    g.strokeStyle = col; g.lineWidth = 1.2;
+    for (var k = x0 - (y1 - y0); k < x1; k += 12) { g.beginPath(); g.moveTo(k, y1); g.lineTo(k + (y1 - y0), y0); g.stroke(); }
+    g.restore();
+    line(g, pts, { close: true, c: col, w: 1.2 });
+  }
+  function legendBox(g, items, x, y) {
+    var w = 0; g.font = "400 16px Arial, sans-serif"; items.forEach(function (it) { w = Math.max(w, g.measureText(it.t).width); });
+    g.fillStyle = "rgba(255,255,255,0.92)"; g.fillRect(x - 10, y - 18, w + 80, items.length * 26 + 12); g.strokeStyle = "#bbb"; g.lineWidth = 1; g.strokeRect(x - 10, y - 18, w + 80, items.length * 26 + 12);
+    items.forEach(function (it, i) { var yy = y + i * 26; line(g, [[x, yy], [x + 50, yy]], { c: it.c, w: it.w || 2.5, dash: it.dash }); txt(g, it.t, x + 60, yy, { s: 16, a: "left", c: "#111" }); });
+  }
+  function markX(g, A, a, lab, col, row, al) {   /* подпись угла под осью */
+    line(g, [[A.px(a), A.py(0) - 5], [A.px(a), A.py(0) + 5]], { c: col, w: 2 });
+    txt(g, lab, A.px(a) + (al === "left" ? 6 : al === "right" ? -6 : 0), A.py(0) + 36 + (row || 0) * 20, { s: 15, c: col, w: "700", a: al || "center" });
+  }
+  function drawPR6static(cvs, S, c, p) {
+    drawDSO(cvs, S, c, { title: "ДСО: статический угол крена и опрокидывающий момент от постоянного ветра", draw: function (g, A) {
+      var lim = p.TF.v || 80;
+      line(g, [[A.px(0), A.py(p.w.lw1)], [A.px(80), A.py(p.w.lw1)]], { c: "#c0392b", w: 2.5 });
+      if (p.st !== undefined) { line(g, [[A.px(p.st), A.py(0)], [A.px(p.st), A.py(p.w.lw1)]], { c: "#c0392b", w: 1.5, dash: [5, 4] }); dot(g, A.px(p.st), A.py(p.w.lw1), 5, "#c0392b"); markX(g, A, p.st, "θст", "#c0392b", 1); }
+      line(g, [[A.px(0), A.py(p.mx.l)], [A.px(Math.min(80, p.mx.a + 12)), A.py(p.mx.l)]], { c: "#8e44ad", w: 2.5, dash: [10, 5] }); dot(g, A.px(p.mx.a), A.py(p.mx.l), 6, "#8e44ad");
+      line(g, [[A.px(p.mx.a), A.py(0)], [A.px(p.mx.a), A.py(p.mx.l)]], { c: "#8e44ad", w: 1.2, dash: [4, 4] });
+      if (p.TF.v) { line(g, [[A.px(p.TF.v), A.py(0)], [A.px(p.TF.v), A.py(lAt(S, p.TF.v) * 1.12)]], { c: "#e67e22", w: 2.5 }); markX(g, A, p.TF.v, "θf", "#e67e22", p.TF.v && Math.abs(p.TF.v - 57.3) < 4 ? 1 : 0); }
+      legendBox(g, [{ c: "#111", w: 3.5, t: "ДСО  l(θ)" }, { c: "#c0392b", t: "lw1 = " + f(p.w.lw1, 4) + " м → θст = " + (p.st !== undefined ? f(p.st, 1) + "°" : "—") },
+        { c: "#8e44ad", dash: [10, 5], t: "lопр = lmax = " + f(p.mx.l, 3) + " м" + (p.TF.v && p.mx.a >= p.TF.v - 0.05 ? " (при θf)" : "") }].concat(p.TF.v ? [{ c: "#e67e22", t: "угол заливания θf = " + f(p.TF.v, 1) + "°" }] : []), A.px(3), A.py(0) - 170 < 120 ? 120 : 120);
+    } });
+  }
+  function drawPR6dyn(cvs, S, c, p) {
+    drawDDO(cvs, S, c, { title: "ДДО: динамические углы крена и опрокидывающий момент от шквала", ymax: p.t4.l * 1.02, draw: function (g, A) {
+      var cols = ["#c0392b", "#1b6fb3", "#27ae60"];
+      line(g, [[A.px(57.3), A.py(0)], [A.px(57.3), A.py(p.t4.l)]], { c: "#555", w: 1.2, dash: [4, 4] }); markX(g, A, 57.3, "57,3°", "#555", 1);
+      p.dyn.forEach(function (x, i) {
+        line(g, [[A.px(0), A.py(0)], [A.px(57.3), A.py(x.lw)]], { c: cols[i], w: 2 }); dot(g, A.px(57.3), A.py(x.lw), 4, cols[i]);
+        if (!x.cap) { dot(g, A.px(x.a), A.py(ldAt(S, x.a)), 5, cols[i]); line(g, [[A.px(x.a), A.py(0)], [A.px(x.a), A.py(ldAt(S, x.a))]], { c: cols[i], w: 1.2, dash: [4, 4] }); }
+      });
+      var ae = Math.min(80, Math.max(p.t4.a + 6, 60)); line(g, [[A.px(0), A.py(0)], [A.px(ae), A.py(p.t4.l * ae / 57.3)]], { c: "#8e44ad", w: 2.5, dash: [10, 5] });
+      dot(g, A.px(p.t4.a), A.py(ldAt(S, p.t4.a)), 6, "#8e44ad"); dot(g, A.px(57.3), A.py(p.t4.l), 6, "#8e44ad");
+      if (p.TF.v) { line(g, [[A.px(p.TF.v), A.py(0)], [A.px(p.TF.v), A.py(ldAt(S, p.TF.v))]], { c: "#e67e22", w: 2 }); }
+      legendBox(g, p.dyn.map(function (x, i) { return { c: cols[i], t: ["а", "б", "в"][i] + ") lw = " + f(x.k, 1) + "·lw1 = " + f(x.lw, 4) + " м → θдин = " + (x.cap ? "опрокидывание" : f(x.a, 1) + "°") }; })
+        .concat([{ c: "#8e44ad", dash: [10, 5], t: "касательная: lопр.дин = " + f(p.t4.l, 3) + " м" }]).concat(p.TF.v ? [{ c: "#e67e22", t: "θf = " + f(p.TF.v, 1) + "°" }] : []), A.px(3), 120);
+    } });
+  }
+  function drawPR6roll(cvs, S, c, p) {
+    var tr = p.tr, e = p.t5.a, lo = p.t5.l, W = 1400, H = 1000, g = cv(cvs, W, H);
+    var a0 = -Math.ceil((tr + 5) / 10) * 10, mx = Math.max(lmax(S, 80).l, lo), mn = lAt(S, a0);
+    var st = mx - mn > 4 ? 0.5 : 0.2, yT = Math.ceil(mx * 1.12 / st) * st, yB = Math.floor(mn * 1.05 / st) * st;
+    var A = axes(g, [110, 70, 1200, 830], [a0, 80, 10, 0], [yB, yT, st, 1], ["θ, °", "l, м"]);
+    var x1 = roots(function (a) { return lAt(S, a) - lo; }, -tr, e, 0.05)[0];
+    var P1 = [[A.px(-tr), A.py(lo)]]; for (var a = -tr; a <= x1 + 1e-9; a += 0.25) P1.push([A.px(a), A.py(lAt(S, a))]);
+    hatch(g, P1, "#c0392b", "rgba(192,57,43,.12)");
+    var P2 = [[A.px(x1), A.py(lo)]]; for (a = x1; a <= e + 1e-9; a += 0.25) P2.push([A.px(a), A.py(lAt(S, a))]); P2.push([A.px(e), A.py(lo)]);
+    hatch(g, P2, "#1b6fb3", "rgba(27,111,179,.12)");
+    curve(g, A, function (x) { return lAt(S, x); }, a0, 80, { w: 3.5 });
+    S.rows.forEach(function (r) { dot(g, A.px(r.a), A.py(r.l), 4); if (r.a > 0 && -r.a >= a0) dot(g, A.px(-r.a), A.py(-r.l), 4); });
+    line(g, [[A.px(-tr), A.py(lAt(S, -tr))], [A.px(-tr), A.py(Math.max(lo, 0))]], { c: "#c0392b", w: 2 }); markX(g, A, -tr, "−θr = −" + f(tr, 0) + "°", "#c0392b", 1);
+    line(g, [[A.px(-tr), A.py(lo)], [A.px(Math.min(80, e + 8)), A.py(lo)]], { c: "#8e44ad", w: 2.5 });
+    line(g, [[A.px(e), A.py(0)], [A.px(e), A.py(Math.max(lo, lAt(S, e)))]], { c: "#e67e22", w: 2 }); markX(g, A, e, (p.TF.v && Math.abs(e - p.TF.v) < 0.1 ? "θf = " : "") + f(e, 1) + "°", "#e67e22", 0);
+    txt(g, "S1", A.px(-tr + 0.3 * (x1 + tr)), A.py(lo) + 26, { s: 20, w: "700", c: "#c0392b" }); txt(g, "S2", A.px((x1 + e) / 2), A.py((lo + lAt(S, (x1 + e) / 2)) / 2), { s: 20, w: "700", c: "#1b6fb3" });
+    legendBox(g, [{ c: "#111", w: 3.5, t: "ДСО  l(θ)" }, { c: "#8e44ad", t: "lопр = " + f(lo, 3) + " м (площади S1 = S2)" }, { c: "#c0392b", t: "начало наклонения: −θr = −" + f(tr, 0) + "°" }, { c: "#e67e22", t: "предел: " + (p.TF.v ? "угол заливания θf" : "80°") }], A.px(28), A.py(yB) - 125);
+    txt(g, "ДСО: опрокидывающий момент от шквала при бортовой качке (θr = " + f(tr, 0) + "°)", W / 2, 32, { s: 21, w: "700" });
+  }
+  function drawPR7(cvs, S, c, p) {
+    var a0 = p.w1 - p.t1r, e = p.w2[1], W = 1400, H = 1000, g = cv(cvs, W, H);
+    var xl = Math.floor((a0 - 4) / 10) * 10, mx = lmax(S, 80).l, mn = Math.min(lAt(S, xl), 0);
+    var st = mx - mn > 4 ? 0.5 : mx - mn > 2 ? 0.2 : 0.1, yT = Math.ceil(mx * 1.1 / st) * st, yB = Math.floor(mn * 1.1 / st) * st;
+    var A = axes(g, [110, 70, 1200, 830], [xl, 80, 10, 0], [yB, yT, st, 1], ["θ, °", "l, м"]);
+    var Pa = [[A.px(a0), A.py(p.lw2)]]; for (var a = a0; a <= p.tst + 1e-9; a += 0.2) Pa.push([A.px(a), A.py(lAt(S, a))]); Pa.push([A.px(p.tst), A.py(p.lw2)]);
+    hatch(g, Pa, "#c0392b", "rgba(192,57,43,.14)");
+    var Pb = [[A.px(p.tst), A.py(p.lw2)]]; for (a = p.tst; a <= e + 1e-9; a += 0.2) Pb.push([A.px(a), A.py(lAt(S, a))]); Pb.push([A.px(e), A.py(p.lw2)]);
+    hatch(g, Pb, "#1b6fb3", "rgba(27,111,179,.14)");
+    curve(g, A, function (x) { return lAt(S, x); }, xl, 80, { w: 3.5 });
+    S.rows.forEach(function (r) { dot(g, A.px(r.a), A.py(r.l), 4); if (r.a > 0 && -r.a >= xl) dot(g, A.px(-r.a), A.py(-r.l), 4); });
+    line(g, [[A.px(xl), A.py(p.lw1)], [A.px(80), A.py(p.lw1)]], { c: "#555", w: 2 });
+    line(g, [[A.px(xl), A.py(p.lw2)], [A.px(80), A.py(p.lw2)]], { c: "#c0392b", w: 2 });
+    line(g, [[A.px(a0), A.py(lAt(S, a0))], [A.px(a0), A.py(Math.max(p.lw2, 0) + (yT - yB) * 0.04)]], { c: "#c0392b", w: 2 });
+    line(g, [[A.px(e), A.py(0)], [A.px(e), A.py(lAt(S, e))]], { c: "#1b6fb3", w: 2 });
+    line(g, [[A.px(p.w1), A.py(0)], [A.px(p.w1), A.py(p.lw1)]], { c: "#555", w: 1.2, dash: [4, 4] });
+    markX(g, A, a0, "θw1 − θ1r = " + f(a0, 1) + "°", "#c0392b", 1); markX(g, A, p.w1, "θw1 = " + f(p.w1, 1) + "°", "#555", 1, "left"); markX(g, A, p.tst, "θst = " + f(p.tst, 1) + "°", "#c0392b", 2, "left"); markX(g, A, e, "θw2", "#1b6fb3", 0);
+    txt(g, "a", A.px((a0 + p.tst) / 2), A.py((p.lw2 + lAt(S, (a0 + p.tst) / 2)) / 2), { s: 26, w: "700", c: "#c0392b" });
+    txt(g, "b", A.px((p.tst + e) / 2 + 4), A.py((p.lw2 + lAt(S, (p.tst + e) / 2 + 4)) / 2), { s: 26, w: "700", c: "#1b6fb3" });
+    legendBox(g, [{ c: "#111", w: 3.5, t: "ДСО  l(θ)" }, { c: "#555", t: "lw1 = " + f(p.lw1, 4) + " м;  θw1 = " + f(p.w1, 1) + "°" }, { c: "#c0392b", t: "lw2 = 1,5·lw1 = " + f(p.lw2, 4) + " м;  θ1r = " + p.t1r + "°" },
+      { c: "#1b6fb3", t: "θw2 = " + f(e, 1) + "° (" + p.w2[0] + ")" }, { c: "#fff", w: 0.1, t: "a = " + f(p.a, 4) + ";  b = " + f(p.b, 4) + " м·рад;  K = b/a = " + f(p.K, 2) }], A.px(24), A.py(yB) - 150);
+    txt(g, "Расчётная схема критерия погоды", W / 2, 32, { s: 22, w: "700" });
   }
 
   /* ---------- общий шаблон работ ---------- */
@@ -6096,32 +6312,9 @@ var TUS = (function () {
     intro: introFn(6),
     solve: function (d) { var c = core(d.variant, d), S = stab(c), p = pr6(d, c, S); return { steps: stepsPR6(d, c, S, p), warn: c.warn, c: c, S: S, p: p }; },
     figs: {
-      dso6: { caption: "ДСО: статический угол крена и опрокидывающий момент от постоянного ветра", draw: function (cv0, pl, d, r) {
-        var p = r.p; drawDSO(cv0, r.S, r.c, { title: "ДСО — действие постоянного ветра", draw: function (g, A) {
-          line(g, [[A.px(0), A.py(p.w.lw1)], [A.px(80), A.py(p.w.lw1)]], { c: "#c0392b", w: 2 }); txt(g, "lw1 = " + f(p.w.lw1, 3), A.px(80), A.py(p.w.lw1) - 14, { s: 15, a: "right", c: "#c0392b" });
-          if (p.st !== undefined) { line(g, [[A.px(p.st), A.py(0)], [A.px(p.st), A.py(p.w.lw1)]], { c: "#c0392b", w: 1.5, dash: [5, 4] }); txt(g, "θст = " + f(p.st, 1) + "°", A.px(p.st) + 6, A.py(0) - 16, { s: 15, a: "left", c: "#c0392b" }); }
-          line(g, [[A.px(0), A.py(p.mx.l)], [A.px(p.mx.a), A.py(p.mx.l)]], { c: "#8e44ad", w: 2, dash: [8, 5] }); txt(g, "lопр = " + f(p.mx.l, 3) + " м", A.px(2), A.py(p.mx.l) - 14, { s: 15, a: "left", c: "#8e44ad" });
-          if (p.TF.v) { line(g, [[A.px(p.TF.v), A.py(0)], [A.px(p.TF.v), A.py(lAt(r.S, p.TF.v))]], { c: "#e67e22", w: 2 }); txt(g, "θf = " + f(p.TF.v, 1) + "°", A.px(p.TF.v) + 6, A.py(0) - 36, { s: 15, a: "left", c: "#e67e22" }); }
-        } }); } },
-      ddo6: { caption: "ДДО: динамические углы крена при lw = 1,5; 2; 3·lw1 и опрокидывающий момент от шквала", draw: function (cv0, pl, d, r) {
-        var p = r.p; drawDDO(cv0, r.S, r.c, { title: "ДДО — динамические углы крена и шквал", draw: function (g, A) {
-          var cols = ["#c0392b", "#1b6fb3", "#27ae60"];
-          p.dyn.forEach(function (x, i) { line(g, [[A.px(0), A.py(0)], [A.px(57.3), A.py(x.lw)]], { c: cols[i], w: 2 }); if (!x.cap) { dot(g, A.px(x.a), A.py(ldAt(r.S, x.a)), 5, cols[i]); } txt(g, "lw = " + f(x.lw, 3) + (x.cap ? " (опрок.)" : ", θ = " + f(x.a, 1) + "°"), A.px(57.3) + 8, A.py(x.lw) - 6 - i * 18, { s: 14, a: "left", c: cols[i] }); });
-          line(g, [[A.px(57.3), A.py(0)], [A.px(57.3), A.py(Math.max(p.t4.l, p.dyn[2].lw))]], { c: "#555", w: 1, dash: [4, 4] });
-          var ae4 = Math.min(80, Math.max(p.t4.a + 8, 57.3)); line(g, [[A.px(0), A.py(0)], [A.px(ae4), A.py(p.t4.l * ae4 / 57.3)]], { c: "#8e44ad", w: 2.5, dash: [10, 5] }); dot(g, A.px(p.t4.a), A.py(ldAt(r.S, p.t4.a)), 6, "#8e44ad");
-          txt(g, "lопр = " + f(p.t4.l, 3) + " м", A.px(57.3) + 8, A.py(p.t4.l), { s: 15, a: "left", c: "#8e44ad", w: "700" });
-        }, ymax: p.t4.l * 1.02 }); } },
-      ddo6r: { caption: "ДДО: опрокидывающий момент от шквала при качке с амплитудой θr", draw: function (cv0, pl, d, r) {
-        var p = r.p, S = r.S, W = 1400, H = 1000, g = cv(cv0, W, H), tr = p.tr, y0 = ldAt(S, tr), mx = Math.max(S.rows[S.rows.length - 1].ld, y0 + p.t5.l);
-        var A = axes(g, [110, 70, 1200, 830], [-30, 80, 10, 0], [0, Math.ceil(mx * 1.1 * 10) / 10, mx > 3 ? 0.5 : 0.2, 1], ["θ, °", "ld, м·рад"]);
-        curve(g, A, function (a) { return ldAt(S, a); }, -30, 80, { w: 3.5 });
-        dot(g, A.px(-tr), A.py(y0), 6, "#c0392b"); txt(g, "(−θr; ld(θr))", A.px(-tr) - 6, A.py(y0) - 16, { s: 15, a: "right", c: "#c0392b" });
-        line(g, [[A.px(-tr), A.py(y0)], [A.px(-tr + 57.3), A.py(y0)]], { c: "#555", w: 1.5, dash: [6, 4] });
-        var ae = Math.min(80, Math.max(p.t5.a + 8, -tr + 57.3)); line(g, [[A.px(-tr), A.py(y0)], [A.px(ae), A.py(y0 + p.t5.l * (ae + tr) / 57.3)]], { c: "#8e44ad", w: 2.5, dash: [10, 5] });
-        line(g, [[A.px(-tr + 57.3), A.py(y0)], [A.px(-tr + 57.3), A.py(y0 + p.t5.l)]], { c: "#8e44ad", w: 2 }); txt(g, "lопр = " + f(p.t5.l, 3) + " м", A.px(-tr + 57.3) + 8, A.py(y0 + p.t5.l / 2), { s: 16, a: "left", c: "#8e44ad", w: "700" });
-        dot(g, A.px(p.t5.a), A.py(ldAt(S, p.t5.a)), 6, "#8e44ad");
-        txt(g, "ДДО — шквал при бортовой качке (θr = " + f(tr, 0) + "°)", W / 2, 32, { s: 22, w: "700" });
-      } } } }));
+      dso6: { caption: "ДСО: статический угол крена и опрокидывающий момент от постоянного ветра", draw: function (cv0, pl, d, r) { drawPR6static(cv0, r.S, r.c, r.p); } },
+      ddo6: { caption: "ДДО: динамические углы крена при lw = 1,5; 2; 3·lw1 и опрокидывающий момент от шквала", draw: function (cv0, pl, d, r) { drawPR6dyn(cv0, r.S, r.c, r.p); } },
+      dso6r: { caption: "ДСО: опрокидывающий момент от шквала при бортовой качке (равенство площадей)", draw: function (cv0, pl, d, r) { drawPR6roll(cv0, r.S, r.c, r.p); } } } }));
 
   /* ПР №7 */
   App.taskWork(mk({ id: "tus3-pr7", order: 307, key: "tus3-pr7", file: "ТУС_ПР7_Критерий_погоды", no: "ПР 7", short: "ПР №7", eyebrow: "ТУС · 3 курс · Практическая работа №7",
@@ -6132,24 +6325,344 @@ var TUS = (function () {
     sections: [FIO, SRC, { title: "Условия", note: "Площадь скуловых килей Ak в Информации не приводится — по умолчанию 0 (k = 1).", fields: [["rho", "Плотность забортной воды ρ", { num: true, unit: "т/м³" }], ["pv", "Давление ветра pv", { num: true, unit: "Па" }], ["ak", "Площадь скуловых килей Ak", { num: true, unit: "м²" }], ["sharp", "Скула", { select: [["no", "круглая"], ["yes", "острая (k = 0,7)"]] }], ["thf", "θf вручную (пусто — по Информации)", { num: true, unit: "°" }], ["thd", "θd вручную (пусто — по Информации)", { num: true, unit: "°" }]] }],
     intro: introFn(7),
     solve: function (d) { var c = core(d.variant, d), S = stab(c), p = pr7(d, c, S); return { steps: stepsPR7(d, c, S, p), warn: c.warn, c: c, S: S, p: p }; },
-    figs: { w7: { caption: "Расчётная схема критерия погоды на ДСО", draw: function (cv0, pl, d, r) {
-      var p = r.p, S = r.S, lo = Math.floor((p.w1 - p.t1r - 5) / 5) * 5;
-      drawDSO(cv0, S, r.c, { neg: Math.max(10, -lo), title: "Критерий погоды: площади a и b", draw: function (g, A) {
-        var a0 = p.w1 - p.t1r, pts = [];
-        for (var a = a0; a <= p.tst + 1e-9; a += 0.25) pts.push([A.px(a), A.py(lAt(S, a))]);
-        pts.push([A.px(p.tst), A.py(p.lw2)]); pts.push([A.px(a0), A.py(p.lw2)]);
-        line(g, pts, { close: true, fill: "rgba(192,57,43,.28)", c: "#c0392b", w: 1 });
-        var pb = [[A.px(p.tst), A.py(p.lw2)]];
-        for (var b = p.tst; b <= p.w2[1] + 1e-9; b += 0.25) pb.push([A.px(b), A.py(lAt(S, b))]);
-        pb.push([A.px(p.w2[1]), A.py(p.lw2)]);
-        line(g, pb, { close: true, fill: "rgba(27,111,179,.25)", c: "#1b6fb3", w: 1 });
-        line(g, [[A.px(a0 - 3), A.py(p.lw1)], [A.px(80), A.py(p.lw1)]], { c: "#555", w: 1.5 }); txt(g, "lw1", A.px(80), A.py(p.lw1) + 14, { s: 15, a: "right" });
-        line(g, [[A.px(a0 - 3), A.py(p.lw2)], [A.px(80), A.py(p.lw2)]], { c: "#c0392b", w: 2 }); txt(g, "lw2", A.px(80), A.py(p.lw2) - 14, { s: 15, a: "right", c: "#c0392b" });
-        line(g, [[A.px(a0), A.py(lAt(S, a0))], [A.px(a0), A.py(p.lw2)]], { c: "#c0392b", w: 2 });
-        line(g, [[A.px(p.w2[1]), A.py(0)], [A.px(p.w2[1]), A.py(lAt(S, p.w2[1]))]], { c: "#1b6fb3", w: 2 });
-        txt(g, "a", A.px((a0 + p.tst) / 2), A.py(p.lw2) + 22, { s: 22, w: "700", c: "#c0392b" }); txt(g, "b", A.px((p.tst + p.w2[1]) / 2), A.py((p.lw2 + lAt(S, (p.tst + p.w2[1]) / 2)) / 2), { s: 22, w: "700", c: "#1b6fb3" });
-        txt(g, "θw1 = " + f(p.w1, 1) + "°; θ1r = " + p.t1r + "°; θw2 = " + f(p.w2[1], 1) + "° (" + p.w2[0] + "); K = " + f(p.K, 2), A.px(35), A.py(0) + 60, { s: 17, w: "700" });
-      } }); } } } }));
+    figs: { w7: { caption: "Расчётная схема критерия погоды на ДСО", draw: function (cv0, pl, d, r) { drawPR7(cv0, r.S, r.c, r.p); } } } }));
+  TUS.G = { cv: cv, txt: txt, line: line, arrow: arrow, dot: dot, axes: axes, FIO: FIO };
+})();
+
+/* ===== ТУС · 4 курс · ПР №1. ДСО аварийного судна со сместившимся зерновым грузом (т/х «Новгород») ===== */
+(function () {
+  "use strict";
+  var f = App.f, num = TUS.num, G = TUS.G, RAD = Math.PI / 180, R = 57.3;
+  var cv = G.cv, txt = G.txt, line = G.line, arrow = G.arrow, dot = G.dot, axes = G.axes;
+
+  /* Универсальная ДСО т/х «Новгород» (рис. 4.4, б [Задачник, с. 49]; файл «Универсальная ДСО»), DW = 6600…14600 т.
+     C(θ) — ордината кривой DW над полюсом (отсчёт по шкале h вверх от 1,0), м. Ось углов — в масштабе sin θ.
+     Луч из точки h шкалы в начало координат: y = (1 − h)·sin θ. Плечо ДСО: l = C − (1 − h)·sin θ.
+     Контроль: DW = 14600 т, h = 0,8 м → l40 = 0,42 м (на рисунке 0,415 м). */
+  var UNI = {
+    th: [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90],
+    dw: [6600, 7600, 8600, 9600, 10600, 11600, 12600, 13600, 14600],
+    C: [
+      [0, .09, .177, .30, .473, .699, .905, 1.058, 1.193, 1.277, 1.308, 1.299, 1.263, 1.19, 1.1, 1, .9, .81, .72],
+      [0, .09, .177, .30, .467, .661, .856, 1.020, 1.163, 1.255, 1.294, 1.290, 1.26, 1.185, 1.095, .995, .89, .8, .71],
+      [0, .09, .177, .30, .460, .619, .807, .965, 1.113, 1.208, 1.253, 1.256, 1.23, 1.17, 1.08, .985, .88, .79, .7],
+      [0, .09, .177, .30, .448, .598, .768, .917, 1.043, 1.145, 1.194, 1.201, 1.179, 1.132, 1.03, .94, .84, .75, .66],
+      [0, .09, .177, .30, .432, .554, .692, .837, .967, 1.063, 1.117, 1.124, 1.098, 1.045, .955, .855, .755, .665, .58],
+      [0, .09, .177, .30, .415, .515, .628, .759, .880, .968, 1.022, 1.025, 1.001, .955, .875, .785, .69, .6, .52],
+      [0, .09, .177, .29, .405, .48, .562, .656, .771, .853, .912, .917, .896, .85, .775, .7, .615, .54, .47],
+      [0, .09, .177, .28, .365, .429, .498, .576, .663, .730, .775, .791, .774, .735, .67, .595, .51, .43, .36],
+      [0, .09, .177, .253, .319, .375, .436, .491, .552, .598, .628, .639, .624, .59, .535, .465, .385, .31, .25]]
+  };
+  var DP = 5400;   /* водоизмещение порожнем, т (табл. 3.1 [1]) */
+  var TH = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90];
+
+  /* монотонный кубический сплайн (PCHIP) */
+  function pchip(x, y) {
+    var n = x.length, h = [], d = [], m = [], i;
+    for (i = 0; i < n - 1; i++) { h[i] = x[i + 1] - x[i]; d[i] = (y[i + 1] - y[i]) / h[i]; }
+    m[0] = d[0]; m[n - 1] = d[n - 2];
+    for (i = 1; i < n - 1; i++) {
+      if (d[i - 1] * d[i] <= 0) m[i] = 0;
+      else { var w1 = 2 * h[i] + h[i - 1], w2 = h[i] + 2 * h[i - 1]; m[i] = (w1 + w2) / (w1 / d[i - 1] + w2 / d[i]); }
+    }
+    return function (t) {
+      if (t <= x[0]) return y[0] + m[0] * (t - x[0]);
+      if (t >= x[n - 1]) return y[n - 1] + m[n - 1] * (t - x[n - 1]);
+      var k = 0; while (t > x[k + 1]) k++;
+      var s = (t - x[k]) / h[k], s2 = s * s, s3 = s2 * s;
+      return (2 * s3 - 3 * s2 + 1) * y[k] + (s3 - 2 * s2 + s) * h[k] * m[k] + (-2 * s3 + 3 * s2) * y[k + 1] + (s3 - s2) * h[k] * m[k + 1];
+    };
+  }
+  var sin = function (a) { return Math.sin(a * RAD); }, cos = function (a) { return Math.cos(a * RAD); };
+  function fc(x, n) { return String(Math.round(x * Math.pow(10, n)) / Math.pow(10, n)).replace(".", ","); }
+  function sg(x, d) { return (x < 0 ? "− " : "") + f(Math.abs(x), d); }
+  function par(x, d) { return x < 0 ? "(" + f(x, d) + ")" : f(x, d); }
+
+  /* кривая C(θ) для заданного DW: линейная интерполяция между соседними кривыми */
+  function uniDW(DW) {
+    var L = UNI.dw, i = 0, cl = Math.min(Math.max(DW, L[0]), L[L.length - 1]);
+    while (i < L.length - 2 && cl > L[i + 1]) i++;
+    var k = (cl - L[i]) / (L[i + 1] - L[i]);
+    var C = UNI.C[i].map(function (c, j) { return c + k * (UNI.C[i + 1][j] - c); });
+    return { lo: L[i], hi: L[i + 1], k: k, Clo: UNI.C[i], Chi: UNI.C[i + 1], C: C, fn: pchip(UNI.th, C), clamped: cl !== DW };
+  }
+  function parseList(s) { return String(s || "").split(/[;\s\n]+/).filter(function (x) { return x !== ""; }).map(function (x) { return parseFloat(x.replace(",", ".")); }).filter(function (x) { return isFinite(x); }); }
+
+  /* характеристики кривой fn на [a0, 90]: максимум, угол заката, площадь положительной части */
+  function params(fn, a0) {
+    var mx = { a: a0, l: -1e9 }, a, zero = null;
+    for (a = a0; a <= 90 + 1e-9; a += 0.1) { var v = fn(a); if (v > mx.l) mx = { a: a, l: v }; }
+    for (a = mx.a; a < 90 - 1e-9; a += 0.1) if (fn(a) > 0 && fn(a + 0.1) <= 0) { zero = a + 0.1 * fn(a) / (fn(a) - fn(a + 0.1)); break; }
+    var end = zero === null ? 90 : zero, S = 0;
+    for (a = a0; a < end - 1e-9; a += 0.1) { var b = Math.min(a + 0.1, end); S += Math.max(0, (fn(a) + fn(b)) / 2) * (b - a) / R; }
+    return { max: mx, zero: zero, S: S, end: end };
+  }
+  function root(fn, a0, a1) { for (var a = a0; a < a1 - 1e-9; a += 0.05) { var u = fn(a), v = fn(a + 0.05); if (u <= 0 && v > 0 || u >= 0 && v < 0) return a + 0.05 * u / (u - v); } return null; }
+
+  /* формулы вариантов: X = a + b·N (коэффициенты задаются во вводных) */
+  var FDEF = { fA0: "6600", fA1: "100", fH0: "0,6", fH1: "0,05", fT0: "10", fT1: "0,5" };
+  function frm(d) {
+    var g = function (k) { var v = num(d[k], NaN); return isFinite(v) ? v : num(FDEF[k], 0); };
+    return { DW: [g("fA0"), g("fA1")], h: [g("fH0"), g("fH1")], t: [g("fT0"), g("fT1")] };
+  }
+  function ftxt(nm, k, N, v, dec, unit) {
+    var a = String(k[0]).replace(".", ","), b = Math.abs(k[1]), bs = String(b).replace(".", ","), op = k[1] < 0 ? " − " : " + ";
+    return nm + " = " + a + op + bs + "·N = " + a + op + bs + "·" + N + " = " + f(v, dec) + unit;
+  }
+  function calc(d) {
+    var warn = [], N = num(d.n, 0), F = frm(d);
+    var DW = num(d.DWx, F.DW[0] + F.DW[1] * N), h = num(d.hx, F.h[0] + F.h[1] * N), thA = num(d.thAx, F.t[0] + F.t[1] * N);
+    var man = d.lsrc === "man", U = null, l0, lman = null;
+    if (man) {
+      lman = parseList(d.lman);
+      if (lman.length !== 10) { warn.push("Ручной ввод l0: нужно 10 значений (θ = 0, 10, …, 90°) — введено " + lman.length + ". Взяты значения по универсальной ДСО."); man = false; }
+    }
+    U = uniDW(DW);
+    if (U.clamped) warn.push("DW = " + f(DW, 0) + " т вне диапазона универсальной ДСО (рис. 4.4, б: 6600…14600 т) — кривая взята по ближайшему DW. Для DW < 6600 т снимите плечи с рис. 4.4, а и введите их вручную.");
+    var h1 = 1 - h;
+    l0 = man ? pchip(TH, lman) : function (a) { return U.fn(a) - h1 * sin(a); };
+    var lA = l0(thA);
+    if (!(lA > 0)) warn.push("l0(θA) ≤ 0 — при таком крене судно не может находиться в равновесии; проверьте DW, h и θA.");
+    var s40 = sin(40), kA = cos(thA) + 0.154 * sin(thA) / s40, g0 = lA / kA, v90 = 0.154 * g0 / s40;
+    var dlg = function (a) { return g0 * cos(a); }, dlv = function (a) { return v90 * sin(a); };
+    var la = function (a) { return l0(a) - dlg(a) - dlv(a); };
+    var tm = (thA + 40) / 2, S40 = (40 - thA) / R / 6 * (la(thA) + 4 * la(tm) + la(40)), S40n = 0;
+    for (var a = thA; a < 40 - 1e-9; a += 0.1) S40n += (la(a) + la(Math.min(a + 0.1, 40))) / 2 * (Math.min(a + 0.1, 40) - a) / R;
+    var rows = TH.map(function (a) { return { a: a, s: sin(a), C: man ? null : U.fn(a), Clo: man ? null : UNI.C[UNI.dw.indexOf(U.lo)][a / 5], Chi: man ? null : UNI.C[UNI.dw.indexOf(U.hi)][a / 5], ray: h1 * sin(a), l0: l0(a), g: dlg(a), v: dlv(a), la: la(a) }; });
+    var P0 = params(l0, 0), PA = params(la, thA);
+    var st = null;
+    if (d.str === "yes") {
+      var thB = num(d.thB, thA / 2) || thA / 2, laB = la(thB), need = Math.max(0, -laB), lB = num(d.lspr, 0);
+      if (!(lB > 0)) lB = need;
+      if (lB < need - 1e-6) warn.push("Спрямление: lспр(B) = " + f(lB, 3) + " м меньше требуемого |la(θB)| = " + f(need, 3) + " м — крен не уменьшится до θB.");
+      var ls0 = lB / cos(thB), la2 = function (a) { return la(a) + ls0 * cos(a); };
+      var thB2 = root(la2, 0, thA + 1e-6); if (thB2 === null) thB2 = 0;
+      var tm2 = (thB2 + 40) / 2;
+      st = { thB: thB, laB: laB, need: need, lB: lB, ls0: ls0, la2: la2, thB2: thB2, S40: (40 - thB2) / R / 6 * (la2(thB2) + 4 * la2(tm2) + la2(40)), tm2: tm2, P: params(la2, thB2),
+        rows: TH.map(function (a) { return { a: a, la: la(a), ls: ls0 * cos(a), la2: la2(a) }; }) };
+    }
+    return { N: N, F: F, DW: DW, h: h, h1: h1, thA: thA, D0: DP + DW, man: man, lman: lman, U: U, l0: l0, lA: lA, kA: kA, g0: g0, v90: v90, la: la, dlg: dlg, dlv: dlv, tm: tm, S40: S40, S40n: S40n,
+      rows: rows, P0: P0, PA: PA, st: st, warn: warn };
+  }
+
+  function degs(x) { return x === null ? "более 90°" : f(x, 1) + "°"; }
+  function steps(d, c) {
+    var s = [], N = c.N, byF = function (v, fv) { return Math.abs(v - fv) < 1e-6; };
+    s.push({ no: 1, noLabel: "", title: "Исходные данные",
+      lines: [
+        byF(c.DW, c.F.DW[0] + c.F.DW[1] * N) ? ftxt("DW", c.F.DW, N, c.DW, 0, " т") : "DW = " + f(c.DW, 0) + " т (задано)",
+        byF(c.h, c.F.h[0] + c.F.h[1] * N) ? ftxt("h", c.F.h, N, c.h, 2, " м") : "h = " + f(c.h, 3) + " м (задано)",
+        byF(c.thA, c.F.t[0] + c.F.t[1] * N) ? ftxt("θA", c.F.t, N, c.thA, 1, "°") : "θA = " + f(c.thA, 1) + "° (задано)",
+        "Δ0 = Δп + DW = " + f(DP, 0) + " + " + f(c.DW, 0) + " = " + f(c.D0, 0) + " т  (Δп — табл. 3.1 [1])"],
+      paras: ["Судно — т/х «Новгород». Обследование подтвердило целостность корпуса; наблюдается смещение груза в трюмах. Единственный достоверно измеряемый параметр — остаточный угол крена θA."] });
+    if (c.man) {
+      s.push({ no: 2, noLabel: "", title: "ДСО неаварийного судна (плечи введены вручную)",
+        paras: ["Плечи l0 сняты с универсальной ДСО т/х «Новгород» самостоятельно и введены вручную (строка ① таблицы плеч)."] });
+    } else {
+      var U = c.U;
+      s.push({ no: 2, noLabel: "", title: "ДСО неаварийного судна по универсальной ДСО т/х «Новгород»",
+        paras: ["По универсальной ДСО (рис. 4.4, б [1]): на шкале h отмечаем h = " + f(c.h, 2) + " м и проводим из этой точки луч в начало координат (0°). Кривую для DW = " + f(c.DW, 0) + " т проводим интерполяцией между кривыми DW = " + f(U.lo, 0) + " т и " + f(U.hi, 0) + " т (k = (" + f(c.DW, 0) + " − " + f(U.lo, 0) + ")/1000 = " + f(U.k, 2) + ").",
+          "Плечо статической остойчивости — отрезок вертикали между лучом и кривой (а не ордината кривой над осью углов): l0 = C − (1 − h)·sin θ, где C — ордината кривой DW, (1 − h)·sin θ = " + f(c.h1, 2) + "·sin θ — ордината луча (ось углов на диаграмме в масштабе sin θ)."],
+        after: ["Снятые плечи l0 записаны в строку ① таблицы плеч (п. 4)."],
+        figs: ["uni"] });
+    }
+    s.push({ no: 3, noLabel: "", title: "Плечи кренящего момента от смещения зерна",
+      paras: ["В точке равновесия A плечо статической остойчивости равно плечу кренящего момента: lA = δl(A) = δlг(0)·cos θA + δlв(90)·sin θA. По СОЛАС (гл. VI) вертикальное смещение зерна учитывается добавкой при 40°: δlв(40) = 0,154·δlг(0), откуда δlв(90) = 0,154·δlг(0)/sin 40°."],
+      lines: ["lA = l0(θA = " + f(c.thA, 1) + "°) = " + f(c.lA, 3) + " м",
+        "δlг(0) = lA / (cos θA + 0,154·sin θA / sin 40°) = " + f(c.lA, 3) + " / (" + f(cos(c.thA), 4) + " + 0,154·" + f(sin(c.thA), 4) + "/" + f(sin(40), 4) + ") = " + f(c.lA, 3) + "/" + f(c.kA, 4) + " = " + f(c.g0, 3) + " м",
+        "δlв(90) = 0,154·δlг(0) / sin 40° = 0,154·" + f(c.g0, 3) + "/" + f(sin(40), 4) + " = " + f(c.v90, 3) + " м",
+        "δlг = δlг(0)·cos θ;  δlв = δlв(90)·sin θ;  δl = δlг + δlв;  la = l0 − δl"],
+      answer: "δlг(0) = " + f(c.g0, 3) + " м; δlв(90) = " + f(c.v90, 3) + " м" });
+    s.push({ no: 4, noLabel: "", title: "Плечи ДСО аварийного судна со сместившимся грузом",
+      tables: [{ headers: ["θ, °"].concat(TH.map(String)), rows: [
+        ["① l0, м"].concat(c.rows.map(function (r) { return f(r.l0, 3); })),
+        ["② δlг, м"].concat(c.rows.map(function (r) { return f(r.g, 3); })),
+        ["③ δlв, м"].concat(c.rows.map(function (r) { return f(r.v, 3); })),
+        ["④ δl = ② + ③, м"].concat(c.rows.map(function (r) { return f(r.g + r.v, 3); })),
+        ["⑤ la = ① − ④, м"].concat(c.rows.map(function (r) { return f(r.la, 3); }))],
+        widths: [3.2].concat(TH.map(function () { return 1.35; })), size: 8 }],
+      paras: ["На ДСО неаварийного судна (по l0) строим кривые δlг = δlг(0)·cos θ и δlв = δlв(90)·sin θ и их сумму δl — плечо кренящего момента от смещения груза; δl пересекает ДСО в точке A при θA. На этих же осях строим ДСО аварийного судна по строке ⑤ таблицы (la = l0 − δl) и штрихуем площадь под ней от θA до 40°."],
+      figs: ["dsoA"] });
+    var ok1 = c.thA <= 12 + 1e-9, ok2 = c.S40 >= 0.075, ok3 = c.h >= 0.30;
+    s.push({ no: 5, noLabel: "", title: "Проверка требований к остойчивости при перевозке зерна (СОЛАС, Правила РМРС)",
+      lines: ["θm = (θA + 40°)/2 = " + f(c.tm, 1) + "°;  la(θA) = " + f(c.la(c.thA), 3) + " м;  la(θm) = " + f(c.la(c.tm), 3) + " м;  la(40°) = " + f(c.la(40), 3) + " м",
+        "S40 = (40 − θA)/57,3/6 · (la(θA) + 4·la(θm) + la(40°)) = " + f(40 - c.thA, 1) + "/57,3/6 · (" + f(c.la(c.thA), 3) + " + 4·" + par(c.la(c.tm), 3) + " + " + par(c.la(40), 3) + ") = " + f(c.S40, 4) + " м·рад  (численно: " + f(c.S40n, 4) + ")",
+        "1) остаточный угол крена θA = " + f(c.thA, 1) + "° " + (ok1 ? "≤" : ">") + " 12° — " + (ok1 ? "выполняется" : "НЕ выполняется"),
+        "2) площадь под ДСО от θA до 40°: S40 = " + f(c.S40, 4) + " м·рад " + (ok2 ? "≥" : "<") + " 0,075 м·рад — " + (ok2 ? "выполняется" : "НЕ выполняется"),
+        "3) начальная метацентрическая высота h = " + f(c.h, 2) + " м " + (ok3 ? "≥" : "<") + " 0,30 м — " + (ok3 ? "выполняется" : "НЕ выполняется")],
+      paras: ["Площадь S40 определена по правилу Симпсона (эквивалентная площадь по трём ординатам)."],
+      answer: ok1 && ok2 && ok3 ? "Остойчивость аварийного судна удовлетворяет требованиям" : "Остойчивость аварийного судна НЕ удовлетворяет требованиям (" + [ok1 ? "" : "θA > 12°", ok2 ? "" : "S40 < 0,075", ok3 ? "" : "h < 0,30 м"].filter(Boolean).join("; ") + ")" });
+    var hd = ["Параметр ДСО", "Неаварийное судно (l0)", "Аварийное судно (la)"], P0 = c.P0, PA = c.PA, rowsP = [
+      ["Угол начала участка положительных плеч", "0°", f(c.thA, 1) + "°"],
+      ["Угол заката ДСО", degs(P0.zero), degs(PA.zero)],
+      ["Протяжённость участка положительных плеч", f(P0.end, 1) + "°" + (P0.zero === null ? " (до 90°)" : ""), f(PA.end - c.thA, 1) + "°" + (PA.zero === null ? " (до 90°)" : "")],
+      ["Максимальное плечо lmax, м", f(P0.max.l, 3), f(PA.max.l, 3)],
+      ["Угол максимума θmax", f(P0.max.a, 0) + "°", f(PA.max.a, 0) + "°"],
+      ["Площадь под положительной частью ДСО, м·рад", f(P0.S, 3), f(PA.S, 3)]];
+    if (c.st) { hd.push("После спрямления (la′)"); var PS = c.st.P; rowsP[0].push(f(c.st.thB2, 1) + "°"); rowsP[1].push(degs(PS.zero)); rowsP[2].push(f(PS.end - c.st.thB2, 1) + "°" + (PS.zero === null ? " (до 90°)" : "")); rowsP[3].push(f(PS.max.l, 3)); rowsP[4].push(f(PS.max.a, 0) + "°"); rowsP[5].push(f(PS.S, 3)); }
+    s.push({ no: 6, noLabel: "", title: "Изменение параметров ДСО после смещения груза",
+      tables: [{ headers: hd, rows: rowsP, widths: c.st ? [5.4, 3, 3, 3] : [6.4, 4, 4] }],
+      paras: ["На борт крена у аварийного судна уменьшились: протяжённость участка положительных плеч (участок начинается с θA), максимальное плечо (на " + f(P0.max.l - PA.max.l, 3) + " м) и площадь под диаграммой — запас динамической остойчивости (на " + f(P0.S - PA.S, 3) + " м·рад, " + f((1 - PA.S / P0.S) * 100, 0) + " %)."] });
+    if (c.st) {
+      var t = c.st;
+      s.push({ no: 7, noLabel: "", title: "Спрямление судна балластом",
+        paras: ["Спрямление выполняется несимметричным приёмом балласта (предпочтительно в танки двойного дна — начальная остойчивость при этом повышается). Требуется уменьшить крен как минимум вдвое: θB ≤ θA/2. Танки подбираются по таблице 3 ПР №2 так, чтобы плечо спрямляющего момента lспр(B) = ΣMy/Δ было не меньше |la(θB)|."],
+        lines: ["θB = " + f(t.thB, 1) + "°;  la(θB) = " + f(t.laB, 3) + " м  →  требуется lспр(B) ≥ " + f(t.need, 3) + " м",
+          "принято lспр(B) = " + f(t.lB, 3) + " м;  lспр(0) = lспр(B)/cos θB = " + f(t.lB, 3) + "/" + f(cos(t.thB), 4) + " = " + f(t.ls0, 3) + " м",
+          "lспр = lспр(0)·cos θ;  la′ = la + lспр;  новый угол крена θ′ = " + f(t.thB2, 1) + "°",
+          "S40′ = (40 − θ′)/57,3/6·(la′(θ′) + 4·la′(" + f(t.tm2, 1) + "°) + la′(40°)) = " + f(t.S40, 4) + " м·рад"],
+        tables: [{ headers: ["θ, °"].concat(TH.map(String)), rows: [
+          ["la, м"].concat(t.rows.map(function (r) { return f(r.la, 3); })),
+          ["lспр, м"].concat(t.rows.map(function (r) { return f(r.ls, 3); })),
+          ["la′ = la + lспр, м"].concat(t.rows.map(function (r) { return f(r.la2, 3); }))], widths: [3.2].concat(TH.map(function () { return 1.35; })), size: 8 }],
+        answer: "θ′ = " + f(t.thB2, 1) + "° " + (t.thB2 <= 12 + 1e-9 ? "≤" : ">") + " 12°;  S40′ = " + f(t.S40, 3) + " м·рад " + (t.S40 >= 0.075 ? "≥" : "<") + " 0,075" });
+    }
+    return s;
+  }
+
+  /* ---------- чертежи ---------- */
+  function legend(g, items, x, y) {
+    items.forEach(function (it, i) { var yy = y + i * 28; line(g, [[x, yy], [x + 46, yy]], { c: it.c, w: it.w || 3, dash: it.dash }); txt(g, it.t, x + 56, yy, { s: 17, a: "left" }); });
+  }
+  function rangeOf(fns, a0, a1) { var mn = 0, mx = 0; fns.forEach(function (fn) { for (var a = a0; a <= a1; a += 1) { var v = fn(a); mn = Math.min(mn, v); mx = Math.max(mx, v); } }); return [mn, mx]; }
+  function stepFor(r) { return r > 2.4 ? 0.5 : r > 1 ? 0.2 : r > 0.5 ? 0.1 : 0.05; }
+  function gridA(cvs, fns, title) {
+    var W = 1400, H = 1000, g = cv(cvs, W, H), rg = rangeOf(fns, 0, 90), st = stepFor(rg[1] - rg[0]);
+    var yB = Math.floor(rg[0] / st - 1e-9) * st, yT = Math.ceil(rg[1] * 1.08 / st) * st;
+    var A = axes(g, [110, 70, 1200, 830], [0, 90, 10, 0], [yB, yT, st, st < 0.1 ? 2 : 1], ["θ, °", "l, м"]);
+    txt(g, title, W / 2, 32, { s: 22, w: "700" });
+    return { g: g, A: A };
+  }
+  function crv(g, A, fn, a0, a1, o) { var p = []; for (var a = a0; a <= a1 + 1e-9; a += 0.5) p.push([A.px(a), A.py(fn(a))]); line(g, p, o); }
+
+  function drawUni(cvs, c) {
+    var W = 1400, H = 1000, g = cv(cvs, W, H), x0 = 120, y0 = 80, w = 1080, hh = 800;
+    var yT = 1.4, yB = Math.min(0, Math.floor(c.h1 * 10 - 1e-9) / 10);
+    var px = function (a) { return x0 + sin(a) * w; }, py = function (v) { return y0 + hh - (v - yB) / (yT - yB) * hh; };
+    TH.forEach(function (a) { line(g, [[px(a), py(yB)], [px(a), py(yT)]], { c: "#d6dde3", w: 1 }); txt(g, String(a), px(a), py(yB) + 18, { s: 15, c: "#333" }); });
+    for (var v = yB; v <= yT + 1e-9; v += 0.1) { line(g, [[x0, py(v)], [px(90), py(v)]], { c: "#d6dde3", w: 1 }); if (v <= 1 + 1e-9) txt(g, f(1 - v, 1), px(90) + 10, py(v), { s: 14, c: "#1b6fb3", a: "left" }); }
+    txt(g, "h, м", px(90) + 10, py(1) - 24, { s: 16, w: "700", c: "#1b6fb3", a: "left" });
+    txt(g, "θ, ° (шкала sin θ)", px(90) - 10, py(yB) + 44, { s: 16, w: "700", a: "right" });
+    UNI.dw.forEach(function (dw, i) {
+      var fn = pchip(UNI.th, UNI.C[i]), p = []; for (var a = 0; a <= 90; a += 1) p.push([px(a), py(fn(a))]);
+      var hl = dw === c.U.lo || dw === c.U.hi; line(g, p, { c: hl ? "#777" : "#bbb", w: hl ? 2 : 1.5 });
+      txt(g, String(dw), px(52), py(fn(52)) - 10, { s: 13, c: hl ? "#333" : "#999" });
+    });
+    var p2 = []; for (var a = 0; a <= 90; a += 1) p2.push([px(a), py(c.U.fn(a))]);
+    line(g, p2, { c: "#111", w: 3.5 });
+    line(g, [[px(0), py(0)], [px(90), py(c.h1)]], { c: "#c0392b", w: 2.5 });
+    dot(g, px(90), py(c.h1), 6, "#c0392b"); txt(g, "h = " + f(c.h, 2), px(90) - 12, py(c.h1) + 20, { s: 16, w: "700", c: "#c0392b", a: "right" });
+    TH.forEach(function (a) { if (a > 0) { line(g, [[px(a), py(c.h1 * sin(a))], [px(a), py(c.U.fn(a))]], { c: "#1b8a3a", w: 2.5 }); txt(g, f(c.l0(a), 2), px(a) - 4, py((c.h1 * sin(a) + c.U.fn(a)) / 2), { s: 14, c: "#1b8a3a", a: "right", w: "700" }); } });
+    txt(g, "Универсальная ДСО т/х «Новгород»: снятие плеч для DW = " + f(c.DW, 0) + " т, h = " + f(c.h, 2) + " м", W / 2, 32, { s: 21, w: "700" });
+    legend(g, [{ c: "#111", t: "кривая DW = " + f(c.DW, 0) + " т (интерполяция)" }, { c: "#c0392b", t: "луч из точки h в начало координат" }, { c: "#1b8a3a", t: "плечо l0 (между лучом и кривой)" }], 150, 110);
+  }
+  function drawDso0(cvs, c) {
+    var o = gridA(cvs, [c.l0], "ДСО неаварийного судна: DW = " + f(c.DW, 0) + " т, h = " + f(c.h, 2) + " м"), g = o.g, A = o.A;
+    crv(g, A, c.l0, 0, 90, { w: 3.5 });
+    TH.forEach(function (a) { dot(g, A.px(a), A.py(c.l0(a)), 4); });
+    line(g, [[A.px(0), A.py(0)], [A.px(57.3), A.py(c.h)]], { c: "#1b6fb3", w: 2, dash: [10, 6] }); line(g, [[A.px(57.3), A.py(0)], [A.px(57.3), A.py(c.h)]], { c: "#1b6fb3", w: 1.5, dash: [4, 4] });
+    txt(g, "h = " + f(c.h, 2) + " м", A.px(57.3) + 8, A.py(c.h) - 12, { s: 16, a: "left", c: "#1b6fb3" });
+  }
+  function drawA(cvs, c) {
+    /* ДСО неаварийного судна по l0 и плечи кренящего момента от смещения груза — как на доске */
+    var sum = function (a) { return c.dlg(a) + c.dlv(a); };
+    var o = gridA(cvs, [c.l0, sum, c.la], "ДСО судна со сместившимся зерновым грузом"), g = o.g, A = o.A;
+    var G = "#1b8a3a", Rd = "#c0392b", Bl = "#1b3f8f";
+    /* площадь под аварийной ДСО la от θA до 40° */
+    var poly = [[A.px(c.thA), A.py(0)]]; for (var a = c.thA; a <= 40 + 1e-9; a += 0.5) poly.push([A.px(a), A.py(Math.max(0, c.la(a)))]); poly.push([A.px(40), A.py(0)]);
+    line(g, poly, { close: true, fill: "rgba(27,63,143,0.12)", nostroke: true });
+    g.save(); g.beginPath(); poly.forEach(function (p, i) { i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]); }); g.closePath(); g.clip();
+    for (var k = A.px(c.thA) - 600; k < A.px(40); k += 14) line(g, [[k, A.py(0)], [k + 600, A.py(0) - 600]], { c: "rgba(27,63,143,0.55)", w: 1.2 });
+    g.restore();
+    line(g, [[A.px(40), A.py(0)], [A.px(40), A.py(c.la(40))]], { c: Bl, w: 1.5, dash: [5, 4] });
+    var sa = Math.min(34, (c.thA + 40) / 2 + 6); txt(g, "S40 = " + f(c.S40, 3) + " м·рад", A.px(sa) + 10, A.py((sum(sa) + c.la(sa)) / 2), { s: 17, w: "700", c: Bl, a: "left" });
+    crv(g, A, c.l0, 0, 90, { w: 3.5 });
+    crv(g, A, c.la, 0, 90, { w: 3.5, c: Bl });
+    TH.forEach(function (a) { dot(g, A.px(a), A.py(c.la(a)), 4, Bl); });
+    txt(g, "la", A.px(84), A.py(c.la(84)) - 18, { s: 20, w: "700", c: Bl });
+    txt(g, "l0", A.px(84), A.py(c.l0(84)) - 18, { s: 20, w: "700" });
+    TH.forEach(function (a) { dot(g, A.px(a), A.py(c.l0(a)), 4); });
+    crv(g, A, c.dlg, 0, 90, { w: 2.5, c: G });
+    crv(g, A, c.dlv, 0, 90, { w: 2.5, c: G, dash: [12, 6] });
+    crv(g, A, sum, 0, 90, { w: 3, c: Rd });
+    /* подписи кривых */
+    txt(g, "δlг", A.px(63), A.py(c.dlg(63)) + 18, { s: 20, w: "700", c: G });
+    txt(g, "δlв", A.px(33), A.py(c.dlv(33)) - 16, { s: 20, w: "700", c: G });
+    txt(g, "δl", A.px(76), A.py(sum(76)) - 18, { s: 20, w: "700", c: Rd });
+    /* амплитуды: δlг(0) на оси l, δlв(90) при 90° */
+    var bx = A.px(0) - 50; line(g, [[bx + 14, A.py(0)], [bx, A.py(0)], [bx, A.py(c.g0)], [bx + 14, A.py(c.g0)]], { c: G, w: 2.5 });
+    txt(g, "δlг(0)", bx - 6, A.py(c.g0 / 2), { s: 16, w: "700", c: G, a: "right" });
+    var ex = A.px(90) + 18; line(g, [[ex - 14, A.py(0)], [ex, A.py(0)], [ex, A.py(c.v90)], [ex - 14, A.py(c.v90)]], { c: G, w: 2.5 });
+    txt(g, "δlв(90)", ex + 6, A.py(c.v90 / 2), { s: 16, w: "700", c: G, a: "left" });
+    dot(g, A.px(0), A.py(c.g0), 5, G); dot(g, A.px(90), A.py(c.v90), 5, G);
+    /* точка A и lA */
+    line(g, [[A.px(c.thA), A.py(0)], [A.px(c.thA), A.py(c.lA)]], { c: "#1b3f8f", w: 2.5 });
+    dot(g, A.px(c.thA), A.py(c.lA), 7, "#1b3f8f"); txt(g, "A", A.px(c.thA) - 14, A.py(c.lA) - 18, { s: 20, w: "700", c: "#1b3f8f" });
+    txt(g, "lA", A.px(c.thA) + 8, A.py(c.lA / 2), { s: 18, w: "700", c: "#1b3f8f", a: "left" });
+    txt(g, "θA = " + f(c.thA, 1) + "°", A.px(c.thA) + 8, A.py(0) + 62, { s: 16, w: "700", c: "#1b3f8f" });
+    txt(g, "40°", A.px(40), A.py(0) + 40, { s: 16, w: "700", c: Bl });
+    legend(g, [{ c: "#111", w: 3.5, t: "l0 — ДСО неаварийного судна" }, { c: G, t: "δlг = δlг(0)·cos θ,  δlг(0) = " + f(c.g0, 3) + " м" }, { c: G, dash: [12, 6], t: "δlв = δlв(90)·sin θ,  δlв(90) = " + f(c.v90, 3) + " м" },
+      { c: Rd, t: "δl = δlг + δlв" }, { c: Bl, w: 3.5, t: "la = l0 − δl — ДСО аварийного судна" }], 150, 105);
+  }
+  function drawLa(cvs, c, st) {
+    var fns = [c.la]; if (st) fns.push(st.la2, function (a) { return st.ls0 * cos(a); });
+    var o = gridA(cvs, fns, st ? "ДСО аварийного судна до и после спрямления" : "ДСО аварийного судна по la (строка ⑤ таблицы)"), g = o.g, A = o.A;
+    var fn = st ? st.la2 : c.la, a0 = st ? st.thB2 : c.thA;
+    var poly = [[A.px(a0), A.py(0)]]; for (var a = a0; a <= 40 + 1e-9; a += 0.5) poly.push([A.px(a), A.py(Math.max(0, fn(a)))]); poly.push([A.px(40), A.py(0)]);
+    line(g, poly, { close: true, fill: "rgba(27,111,179,0.18)", nostroke: true });
+    for (a = Math.ceil(a0 / 2) * 2; a <= 40; a += 2) if (fn(a) > 0) line(g, [[A.px(a), A.py(0)], [A.px(Math.min(40, a + 3)), A.py(Math.max(0, fn(Math.min(40, a + 3))))]], { c: "rgba(27,111,179,0.45)", w: 1 });
+    crv(g, A, c.la, 0, 90, { w: 3.5, c: "#1b3f8f", dash: st ? [10, 6] : [] });
+    TH.forEach(function (a) { dot(g, A.px(a), A.py(c.la(a)), 4, "#1b3f8f"); });
+    if (st) {
+      crv(g, A, function (a) { return st.ls0 * cos(a); }, 0, 90, { w: 2.5, c: "#c0392b" });
+      crv(g, A, st.la2, 0, 90, { w: 3.5, c: "#18a0c9" });
+      dot(g, A.px(st.thB2), A.py(0), 6, "#18a0c9"); txt(g, "θ′ = " + f(st.thB2, 1) + "°", A.px(st.thB2), A.py(0) + 54, { s: 16, w: "700", c: "#18a0c9" });
+      legend(g, [{ c: "#1b3f8f", w: 3.5, dash: [10, 6], t: "la — аварийное судно" }, { c: "#c0392b", t: "lспр = lспр(0)·cos θ" }, { c: "#18a0c9", w: 3.5, t: "la′ = la + lспр — после спрямления" }], 700, 110);
+    }
+    dot(g, A.px(c.thA), A.py(0), 6, "#1b3f8f"); txt(g, "θA = " + f(c.thA, 1) + "°", A.px(c.thA), A.py(0) + 34, { s: 16, w: "700" });
+    line(g, [[A.px(40), A.py(0)], [A.px(40), A.py(fn(40))]], { c: "#555", w: 1.5, dash: [5, 4] });
+    txt(g, "S40 = " + f(st ? st.S40 : c.S40, 3) + " м·рад", A.px((a0 + 40) / 2 + 3), A.py(fn((a0 + 40) / 2) * 0.45), { s: 17, w: "700", c: "#1b3f8f" });
+    txt(g, "40°", A.px(40), A.py(0) + 40, { s: 16, w: "700" });
+    if (!st) { dot(g, A.px(0), A.py(c.la(0)), 5, "#1b3f8f"); txt(g, "−δlг(0) = " + f(c.la(0), 3) + " м", A.px(0) + 12, A.py(c.la(0)) + 4, { s: 15, a: "left", c: "#1b3f8f" });
+      var mxA = c.PA.max; dot(g, A.px(mxA.a), A.py(mxA.l), 6, "#1b3f8f"); txt(g, "lmax = " + f(mxA.l, 3) + " м (θ = " + f(mxA.a, 0) + "°)", A.px(mxA.a), A.py(mxA.l) - 18, { s: 15, c: "#1b3f8f", w: "700" }); }
+  }
+
+  function fmtNum(x) { return String(x).replace(".", ","); }
+  var VARS4 = []; for (var i = 1; i <= 30; i++) VARS4.push(String(i));
+  var LSAMPLE = "0; 0,08; 0,28; 0,60; 0,82; 0,88; 0,79; 0,57; 0,36; 0,17";
+
+  App.taskWork({ disc: "tus", discName: "Теория и устройство судна", sec: "4", id: "tus4-pr1", order: 401, key: "tus4-pr1", file: "ТУС4_ПР1_Смещение_груза", no: "ПР 1", short: "ПР №1", eyebrow: "ТУС · 4 курс · Практическая работа №1",
+    titleKind: "Практическая работа", title: "Построение ДСО аварийного судна со сместившимся зерновым грузом", titleTopic: "Построение диаграммы статической остойчивости аварийного судна со сместившимся зерновым грузом (т/х «Новгород»)",
+    desc: "ДСО по универсальной диаграмме т/х «Новгород», плечи δlг и δlв по СОЛАС, ДСО аварийного судна, проверка θA ≤ 12° и S40 ≥ 0,075, спрямление балластом.",
+    goal: "Цель: освоить построение диаграммы статической остойчивости аварийного судна со сместившимся грузом по остаточному углу крена и оценить её параметры по требованиям СОЛАС.",
+    hint: "Вводные считаются по формулам X = a + b·N (по умолчанию с доски: DW = 6600 + 100·N, h = 0,6 + 0,05·N, θA = 10 + 0,5·N). Коэффициенты формул можно менять, а DW, h, θA — задать напрямую; плечи l0 можно ввести свои (снятые с диаграммы).",
+    variants: VARS4, defaultVariant: "8", variantLabel: "Порядковый номер N", variantName: function (v) { return "N = " + v; },
+    variantData: function (v) { var N = +v; return { variant: v, fio: "", group: "", n: String(N), date: "", fA0: FDEF.fA0, fA1: FDEF.fA1, fH0: FDEF.fH0, fH1: FDEF.fH1, fT0: FDEF.fT0, fT1: FDEF.fT1, DWx: "", hx: "", thAx: "", lsrc: "uni", lman: LSAMPLE, str: "no", thB: "", lspr: "" }; },
+    keep: ["fio", "group", "date", "lsrc", "str", "fA0", "fA1", "fH0", "fH1", "fT0", "fT1"],
+    varText: function (d) { var c = calc(d); return "N = " + d.n + ": DW = " + f(c.DW, 0) + " т, h = " + f(c.h, 2) + " м, θA = " + f(c.thA, 1) + "°"; },
+    sections: [G.FIO,
+      { title: "Формулы вариантов: X = a + b·N", note: "N — порядковый номер (поле «№ в группе»). По умолчанию — формулы с доски: DW = 6600 + 100·N, h = 0,6 + 0,05·N, θA = 10 + 0,5·N. Для формул методички: DW0 = 6600 − 100·R (b = −100), h0 = 0,6 + 0,03·R (b = 0,03); при DW < 6600 т плечи вводятся вручную по рис. 4.4, а.",
+        fields: [["fA0", "DW: a", { num: true, unit: "т" }], ["fA1", "DW: b", { num: true, unit: "т" }], ["fH0", "h: a", { num: true, unit: "м" }], ["fH1", "h: b", { num: true, unit: "м" }], ["fT0", "θA: a", { num: true, unit: "°" }], ["fT1", "θA: b", { num: true, unit: "°" }]] },
+      { title: "Исходные данные напрямую (т/х «Новгород»)", note: "Пусто — считается по формулам выше. Заполните, если значение задано иначе.",
+        fields: [["DWx", "Дедвейт DW", { num: true, unit: "т", ph: "по формуле" }], ["hx", "Метацентрическая высота h", { num: true, unit: "м", ph: "по формуле" }], ["thAx", "Остаточный угол крена θA", { num: true, unit: "°", ph: "по формуле" }]] },
+      { title: "Плечи ДСО неаварийного судна l0", note: "«По универсальной ДСО» — плечи снимаются автоматически с оцифрованной диаграммы (кривая DW интерполируется, из точки h проводится луч, l0 = C − (1 − h)·sin θ). «Ввести вручную» — 10 значений l0 через «;» для θ = 0, 10, …, 90°.",
+        fields: [["lsrc", "Источник", { select: [["uni", "по универсальной ДСО"], ["man", "ввести вручную"]] }], ["lman", "l0 для 0…90° через «;»", { area: true, rows: 2, wide: true }]] },
+      { title: "Спрямление балластом", note: "θB — угол после спрямления (пусто — θA/2). lспр(B) — плечо спрямляющего момента ΣMy/Δ выбранных танков (пусто — минимально необходимое |la(θB)|).",
+        fields: [["str", "Выполнять", { select: [["yes", "да"], ["no", "нет"]] }], ["thB", "θB", { num: true, unit: "°" }], ["lspr", "lспр(B)", { num: true, unit: "м" }]] }],
+    intro: function (U, d, res) {
+      var c = res.c;
+      [["ФИО курсанта", d.fio], ["№ группы", d.group], ["Порядковый номер в группе", d.n], ["Дата выполнения задания", d.date || ""], ["Судно", "т/х «Новгород»"],
+        ["Исходные данные", "DW = " + f(c.DW, 0) + " т;  h = " + f(c.h, 2) + " м;  θA = " + f(c.thA, 1) + "°"]].forEach(function (p) { U.para([{ t: p[0] + ": ", bold: true }, String(p[1] || "—")], { after: 1 }); });
+      U.para("", { after: 4 });
+    },
+    solve: function (d) { var c = calc(d); var st = steps(d, c); st.forEach(function (x) { x.lines = x.lines || []; x.paras = x.paras || []; }); return { steps: st, warn: c.warn, c: c }; },
+    figs: {
+      uni: { caption: "Снятие плеч с универсальной ДСО т/х «Новгород»", draw: function (cvs, pl, d, r) { drawUni(cvs, r.c); } },
+      dso0: { caption: "ДСО неаварийного судна", draw: function (cvs, pl, d, r) { drawDso0(cvs, r.c); } },
+      dsoA: { caption: "ДСО неаварийного (l0) и аварийного (la) судна, плечи кренящего момента δlг, δlв, δl; заштрихована площадь S40", draw: function (cvs, pl, d, r) { drawA(cvs, r.c); } },
+      dsoa: { caption: "ДСО аварийного судна со сместившимся грузом по la (заштрихована площадь S40 от θA до 40°)", draw: function (cvs, pl, d, r) { drawLa(cvs, r.c, null); } },
+      dsoS: { caption: "ДСО аварийного судна до и после спрямления", draw: function (cvs, pl, d, r) { drawLa(cvs, r.c, r.c.st); } } },
+    summary: false });
 })();
 
 
