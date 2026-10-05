@@ -12,3 +12,5 @@ jobs:
         with:
           name: recovered-modules
           path: recovered-academic-modules.js
+
+# rerun after module-boundary fix
