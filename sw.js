@@ -1,5 +1,5 @@
 /* Бурсач: офлайн-кэш. Версия меняется при каждой сборке. */
-var V = "bursach-55ff9954", CORE = ["./", "index.html", "app.js?v=55ff9954", "manifest.json", "icon-180.png", "icon-192.png", "icon-512.png"];
+var V = "bursach-f79b052b", CORE = ["./", "index.html", "app.js?v=f79b052b", "manifest.json", "icon-180.png", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", function (e) { self.skipWaiting(); e.waitUntil(caches.open(V).then(function (c) { return c.addAll(CORE); })); });
 self.addEventListener("activate", function (e) { e.waitUntil(caches.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k !== V; }).map(function (k) { return caches.delete(k); })); }).then(function () { return self.clients.claim(); })); });
 self.addEventListener("fetch", function (e) {
