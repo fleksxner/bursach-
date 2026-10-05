@@ -1,8 +1,7 @@
-name: recovery-artifact
+name: root-package
 on:
   push:
     branches: [recovery-modules]
-  workflow_dispatch:
 jobs:
   package:
     runs-on: ubuntu-latest
@@ -10,7 +9,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/upload-artifact@v4
         with:
-          name: recovered-modules
-          path: recovered-academic-modules.js
-
-# rerun after module-boundary fix
+          name: github-root-original
+          path: |
+            README.md
+            app.js
+            icon-180.png
+            icon-192.png
+            icon-512.png
+            index.html
+            m
+            manifest.json
+            nav_assets.json
+            sw.js
