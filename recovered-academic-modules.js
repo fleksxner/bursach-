@@ -809,4 +809,403 @@ var MIYUS = (function () {
     ];
   }
 
-  
+  /* ======================================================================
+     Рисунки
+     ====================================================================== */
+  function arrow(c, x0, y0, x1, y1, col, w, head) {
+    c.strokeStyle = col; c.fillStyle = col; c.lineWidth = w || 3; c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
+    var a = Math.atan2(y1 - y0, x1 - x0), h = head || 18; c.beginPath(); c.moveTo(x1, y1);
+    c.lineTo(x1 - h * Math.cos(a - 0.33), y1 - h * Math.sin(a - 0.33)); c.lineTo(x1 - h * Math.cos(a + 0.33), y1 - h * Math.sin(a + 0.33)); c.closePath(); c.fill();
+  }
+  function dimH(c, xa, xb, y, txt, col, FONT, up) {
+    if (Math.abs(xb - xa) < 2) return;
+    c.strokeStyle = col; c.fillStyle = col; c.lineWidth = 1.6; c.beginPath(); c.moveTo(xa, y); c.lineTo(xb, y); c.stroke();
+    [[xa, xb], [xb, xa]].forEach(function (p) { var s = p[1] > p[0] ? 1 : -1; c.beginPath(); c.moveTo(p[0], y); c.lineTo(p[0] + 13 * s, y - 5); c.lineTo(p[0] + 13 * s, y + 5); c.closePath(); c.fill(); });
+    c.font = "600 21px " + FONT; c.textAlign = "center"; c.fillText(txt, (xa + xb) / 2, y + (up ? -9 : 24));
+  }
+  function label(c, txt, x, y, col, size, FONT, align, bold) {
+    c.font = (bold === false ? "" : "600 ") + (size || 22) + "px " + FONT; c.textAlign = align || "center";
+    c.lineWidth = 5; c.strokeStyle = "rgba(255,255,255,0.92)"; c.strokeText(txt, x, y); c.fillStyle = col; c.fillText(txt, x, y);
+  }
+  /* подпись центра «O» — с той стороны, где нет векторов */
+  function oPos(cx, cy, pts, r) {
+    var sx = 0, sy = 0; pts.forEach(function (p) { var dx = p[0] - cx, dy = p[1] - cy, l = Math.sqrt(dx * dx + dy * dy) || 1; sx += dx / l; sy += dy / l; });
+    var l = Math.sqrt(sx * sx + sy * sy); if (l < 1e-6) { sx = -1; sy = -1; l = Math.SQRT2; }
+    return [cx - sx / l * r, cy - sy / l * r + 8];
+  }
+  function niceStep(span, n) { var raw = span / (n || 6), p = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10)), m = raw / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p; }
+  /* естественный кубический сплайн: плавная кривая «по лекалу» через все расчётные точки */
+  function spline(xs, ys) {
+    var n = xs.length, i, h = [], al = [0], l = [1], mu = [0], z = [0], cc = [], bb = [], dd = [];
+    if (n < 3) return function (x) { return ys[0] + (ys[n - 1] - ys[0]) * (x - xs[0]) / (xs[n - 1] - xs[0]); };
+    for (i = 0; i < n - 1; i++) h.push(xs[i + 1] - xs[i]);
+    for (i = 1; i < n - 1; i++) al.push(3 / h[i] * (ys[i + 1] - ys[i]) - 3 / h[i - 1] * (ys[i] - ys[i - 1]));
+    for (i = 1; i < n - 1; i++) { l[i] = 2 * (xs[i + 1] - xs[i - 1]) - h[i - 1] * mu[i - 1]; mu[i] = h[i] / l[i]; z[i] = (al[i] - h[i - 1] * z[i - 1]) / l[i]; }
+    cc[n - 1] = 0;
+    for (i = n - 2; i >= 0; i--) { cc[i] = (i ? z[i] : 0) - (i ? mu[i] : 0) * cc[i + 1]; bb[i] = (ys[i + 1] - ys[i]) / h[i] - h[i] * (cc[i + 1] + 2 * cc[i]) / 3; dd[i] = (cc[i + 1] - cc[i]) / (3 * h[i]); }
+    return function (x) { var k = 0; while (k < n - 2 && x > xs[k + 1]) k++; var t = x - xs[k]; return ys[k] + bb[k] * t + cc[k] * t * t + dd[k] * t * t * t; };
+  }
+  function drawGraph(cv, LK, o) {
+    var W = 1400, H = 900; cv.width = W; cv.height = H; var c = cv.getContext("2d"), FONT = LK.font, ink = LK.ink || "#1b1b1b";
+    c.fillStyle = "#fff"; c.fillRect(0, 0, W, H);
+    var S = o.series.filter(function (s) { return s.pts.length >= 2; });
+    if (!S.length) { label(c, "Недостаточно точек для графика", W / 2, H / 2, "#c1121f", 30, FONT); return; }
+    var ml = 150, mr = 50, mt = 90, mb = 110, pw = W - ml - mr, ph = H - mt - mb;
+    var ymin = Infinity, ymax = -Infinity; S.forEach(function (s) { s.pts.forEach(function (p) { ymin = Math.min(ymin, p[1]); ymax = Math.max(ymax, p[1]); }); });
+    ymin = Math.min(ymin, 0); ymax = Math.max(ymax, 0); if (ymax - ymin < 1e-9) ymax = ymin + 1;
+    S.forEach(function (s) { var xs = s.pts.map(function (q) { return q[0]; }), fn = spline(xs, s.pts.map(function (q) { return q[1]; }));
+      for (var x = xs[0]; x <= xs[xs.length - 1]; x += 1) { var yy = fn(x); ymin = Math.min(ymin, yy); ymax = Math.max(ymax, yy); } });
+    var pos = ymin >= 0, st = niceStep(ymax - ymin, 8);
+    ymin = pos ? 0 : Math.floor(ymin / st - 0.12) * st; ymax = Math.ceil(ymax / st + 0.12) * st;
+    function X(p) { return ml + p / 180 * pw; } function Y(v) { return mt + (ymax - v) / (ymax - ymin) * ph; }
+    /* сетка */
+    c.strokeStyle = "#e3e3e3"; c.lineWidth = 1;
+    for (var p = 0; p <= 180; p += 15) { c.beginPath(); c.moveTo(X(p), mt); c.lineTo(X(p), mt + ph); c.stroke(); }
+    for (var v = ymin; v <= ymax + 1e-9; v += st) { c.beginPath(); c.moveTo(ml, Y(v)); c.lineTo(ml + pw, Y(v)); c.stroke(); }
+    c.strokeStyle = ink; c.lineWidth = 2; c.strokeRect(ml, mt, pw, ph);
+    c.lineWidth = 2.5; c.beginPath(); c.moveTo(ml, Y(0)); c.lineTo(ml + pw, Y(0)); c.stroke();
+    c.font = "20px " + FONT; c.fillStyle = ink; c.textAlign = "center";
+    for (p = 0; p <= 180; p += 15) c.fillText(String(p), X(p), mt + ph + 30);
+    c.textAlign = "right"; var nd = st < 1 ? (st < 0.1 ? 2 : 1) : 0;
+    for (v = ymin; v <= ymax + 1e-9; v += st) c.fillText(f(v, nd), ml - 12, Y(v) + 7);
+    c.font = "600 24px " + FONT; c.textAlign = "center"; c.fillText("φ, °", ml + pw / 2, H - 30);
+    c.save(); c.translate(42, mt + ph / 2); c.rotate(-Math.PI / 2); c.fillText(o.ylab, 0, 0); c.restore();
+    c.font = "700 28px " + FONT; c.textAlign = "left"; c.fillText(o.title, ml, 50);
+    /* кривые и точки */
+    S.forEach(function (s, si) {
+      var xs = s.pts.map(function (q) { return q[0]; }), ys = s.pts.map(function (q) { return q[1]; }), fn = spline(xs, ys);
+      c.strokeStyle = s.color; c.lineWidth = 4; c.setLineDash(si ? [] : []); c.beginPath();
+      for (var x = xs[0], k = 0; x <= xs[xs.length - 1] + 1e-9; x += 0.5, k++) { var yy = fn(Math.min(x, xs[xs.length - 1])); if (k) c.lineTo(X(x), Y(yy)); else c.moveTo(X(x), Y(yy)); }
+      c.stroke();
+      s.pts.forEach(function (q) {
+        c.fillStyle = "#fff"; c.strokeStyle = s.color; c.lineWidth = 3; c.beginPath(); c.arc(X(q[0]), Y(q[1]), 7, 0, 2 * Math.PI); c.fill(); c.stroke();
+        var out = s.outer ? (q[1] >= 0 ? -1 : 1) : (q[1] >= 0 ? 1 : -1), ty = Y(q[1]) + (out < 0 ? -16 : 30);
+        if (ty < mt + 18) ty = Y(q[1]) + 30; if (ty > mt + ph - 6) ty = Y(q[1]) - 16;
+        label(c, f(q[1], s.nd), X(q[0]) + (q[0] === 180 ? -14 : q[0] === 0 ? 14 : 0), ty, s.color, 18, FONT, q[0] === 180 ? "right" : q[0] === 0 ? "left" : "center");
+      });
+    });
+    /* легенда */
+    var lx = ml + pw - 420, ly = mt + 18, lh = 34 * S.length + 18;
+    if (o.legendLeft) lx = ml + 20;
+    if (o.legendBottom) ly = mt + ph - lh - 18;
+    c.fillStyle = "rgba(255,255,255,0.93)"; c.strokeStyle = "#999"; c.lineWidth = 1.5; c.fillRect(lx, ly, 400, lh); c.strokeRect(lx, ly, 400, lh);
+    S.forEach(function (s, i) {
+      var y = ly + 30 + i * 34; c.strokeStyle = s.color; c.lineWidth = 4; c.beginPath(); c.moveTo(lx + 16, y - 7); c.lineTo(lx + 70, y - 7); c.stroke();
+      c.fillStyle = ink; c.font = "21px " + FONT; c.textAlign = "left"; c.fillText(s.name, lx + 84, y);
+    });
+  }
+  var C1 = "#1d4e89", C2 = "#c1121f", C3 = "#2a9d8f", C4 = "#e07a00";
+  function drawRa(cv, LK, d, r) {
+    var t = r.t1;
+    drawGraph(cv, LK, { title: "Ra = f(φ) — судно " + (d.ship || ""), ylab: "Ra, тс", series: [
+      { name: "Ra1 при Wa = " + g0(t.W1) + " м/с", color: C1, nd: 1, pts: t.rows.map(function (q) { return [q.p, q.Ra1]; }) },
+      { name: "Ra2 при Wa = " + g0(t.W2) + " м/с", color: C2, nd: 1, outer: true, pts: t.rows.map(function (q) { return [q.p, q.Ra2]; }) }] });
+  }
+  function drawRm(cv, LK, d, r) {
+    var t = r.t1;
+    drawGraph(cv, LK, { title: "Rm = f(φ) — судно " + (d.ship || ""), ylab: "Rm, тс·м", legendBottom: true, legendLeft: true, series: [
+      { name: "Rm1 при Wa = " + g0(t.W1) + " м/с", color: C1, nd: 1, pts: t.rows.map(function (q) { return [q.p, q.Rm1]; }) },
+      { name: "Rm2 при Wa = " + g0(t.W2) + " м/с", color: C2, nd: 1, outer: true, pts: t.rows.map(function (q) { return [q.p, q.Rm2]; }) }] });
+  }
+  /* схема (рис. 1.1): судно в плане, точка C, G, сила Ra и её составляющие */
+  function drawScheme(cv, LK, d, r) {
+    var W = 1400, H = 930; cv.width = W; cv.height = H; var c = cv.getContext("2d"), FONT = LK.font, ink = LK.ink || "#1b1b1b";
+    c.fillStyle = "#fff"; c.fillRect(0, 0, W, H);
+    var t = r.t1, ps = num(d.phiS); if (!isFinite(ps)) ps = 30; ps = Math.max(0, Math.min(180, ps));
+    if (!t.rows.length || !isFinite(t.Lpp)) { label(c, "Нет данных для схемы", W / 2, H / 2, "#c1121f", 30, FONT); return; }
+    /* величины для выбранного φ (считаются так же, как в таблице) */
+    var tab = ptsOf(d.ca), Ca = rnd(caAt(tab, ps).v, 3), c2 = rnd(Math.pow(Math.cos(ps * R), 2), 4), s2 = rnd(Math.pow(Math.sin(ps * R), 2), 4);
+    var S = rnd(t.Aa * c2 + t.Ba * s2, 1), Ra = rnd(0.5 * t.rho * Ca * S * t.W1 * t.W1, 2), a = rnd((0.292 + 0.0023 * ps) * t.Lpp, 2), al = rnd(alphaOf(ps, t.corr), 1);
+    var CG = rnd(t.half - a, 2), Xa = rnd(Ra * Math.cos(al * R), 2), Ya = rnd(Ra * Math.sin(al * R), 2), Rm = rnd(Ya * CG, 1);
+    /* корпус: нос справа; верх рисунка — наветренный борт */
+    var x1 = 1150, x0 = 200, k = (x1 - x0) / t.Lpp, yc = 300, hb = Math.max(46, Math.min(80, num(d.B) * k / 2 || 60));
+    var xG = x1 - t.half * k, xC = x1 - a * k, yd = yc + 300;
+    c.fillStyle = "#e9eef4"; c.strokeStyle = ink; c.lineWidth = 3.5; c.beginPath();
+    c.moveTo(x0, yc - hb * 0.82); c.lineTo(x1 - 150, yc - hb); c.quadraticCurveTo(x1 - 20, yc - hb, x1 + 34, yc);
+    c.quadraticCurveTo(x1 - 20, yc + hb, x1 - 150, yc + hb); c.lineTo(x0, yc + hb * 0.82); c.closePath(); c.fill(); c.stroke();
+    c.fillStyle = "#c9d3de"; c.fillRect(x0 + 18, yc - hb * 0.55, 95, hb * 1.1); c.strokeRect(x0 + 18, yc - hb * 0.55, 95, hb * 1.1);
+    c.setLineDash([22, 7, 4, 7]); c.lineWidth = 1.6; c.beginPath(); c.moveTo(x0 - 80, yc); c.lineTo(x1 + 120, yc); c.stroke(); c.setLineDash([]);
+    label(c, "ДП", x1 + 118, yc - 12, ink, 20, FONT, "right");
+    /* перпендикуляры и выносные линии */
+    [[x1, "НП"], [x0, "КП"]].forEach(function (q) { c.strokeStyle = ink; c.lineWidth = 2; c.beginPath(); c.moveTo(q[0], yc - hb - 26); c.lineTo(q[0], yd + 112); c.stroke(); label(c, q[1], q[0], yc - hb - 34, ink, 20, FONT); });
+    c.setLineDash([6, 6]); c.strokeStyle = "#888"; c.lineWidth = 1.4;
+    [xC, xG].forEach(function (xx) { c.beginPath(); c.moveTo(xx, yc + 10); c.lineTo(xx, yd + (xx === xG ? 60 : 10)); c.stroke(); }); c.setLineDash([]);
+    /* ветер: под углом φ к ДП (отсчёт от носа), с наветренного борта, направлен в точку C */
+    var ux = Math.cos(ps * R), uy = -Math.sin(ps * R);
+    var t0 = Math.min(Math.abs(uy) > 1e-3 ? (hb + 10) / Math.abs(uy) : 1e9, Math.abs(ux) > 1e-3 ? ((ux > 0 ? x1 + 46 - xC : xC - x0 + 12) / Math.abs(ux)) : 1e9);
+    var Lw = 190, ex = xC + t0 * ux, ey = yc + t0 * uy - (ps < 3 || ps > 177 ? 0 : 0), sx = xC + (t0 + Lw) * ux, sy = yc + (t0 + Lw) * uy;
+    if (ps < 3 || ps > 177) { ey -= 16; sy -= 16; }
+    arrow(c, sx, sy, ex, ey, C3, 5, 22);
+    c.setLineDash([4, 6]); c.strokeStyle = C3; c.lineWidth = 1.5; c.beginPath(); c.moveTo(ex, ey); c.lineTo(xC, yc); c.stroke(); c.setLineDash([]);
+    label(c, "Va", sx + (ux >= 0 ? 14 : -14), sy - 8, C3, 26, FONT, ux >= 0 ? "left" : "right");
+    var ra = Math.min(t0 + 60, 260);
+    if (ps > 2) { c.strokeStyle = C3; c.lineWidth = 2; c.beginPath(); c.arc(xC, yc, ra, -ps * R, 0, false); c.stroke();
+      var mA = -ps * R * 0.8; label(c, "φ = " + g0(ps) + "°", xC + (ra + 14) * Math.cos(mA), yc + (ra + 14) * Math.sin(mA) - 4, C3, 22, FONT, Math.cos(mA) < -0.3 ? "right" : "left"); }
+    /* сила Ra из C: от направления «в корму» по ДП на угол α в подветренную сторону */
+    var Lr = 240, rx = xC - Lr * Math.cos(al * R), ry = yc + Lr * Math.sin(al * R);
+    c.setLineDash([8, 6]); c.strokeStyle = "#777"; c.lineWidth = 2; c.beginPath(); c.moveTo(rx, ry); c.lineTo(rx, yc); c.moveTo(rx, ry); c.lineTo(xC, ry); c.stroke(); c.setLineDash([]);
+    arrow(c, xC, yc, rx, ry, C1, 5, 22);
+    if (Math.abs(rx - xC) > 25) { arrow(c, xC, yc, rx, yc, C4, 4, 18); label(c, "Xa", (xC + rx) / 2, yc - 12, C4, 22, FONT); }
+    if (Math.abs(ry - yc) > 25) { arrow(c, xC, yc, xC, ry, C4, 4, 18); label(c, "Ya", xC + (rx < xC ? 14 : -14), (yc + ry) / 2 + 40, C4, 22, FONT, rx < xC ? "left" : "right"); }
+    label(c, "Ra", rx + (rx < xC ? -14 : 14), ry + 28, C1, 26, FONT, rx < xC ? "right" : "left");
+    c.strokeStyle = C1; c.lineWidth = 2; c.beginPath(); c.arc(xC, yc, 64, Math.PI - al * R, Math.PI, false); c.stroke();
+    label(c, "α", xC - 86 * Math.cos(al * R / 2), yc + 86 * Math.sin(al * R / 2) + 8, C1, 22, FONT);
+    /* G и C */
+    c.fillStyle = ink; c.beginPath(); c.arc(xG, yc, 8, 0, 2 * Math.PI); c.fill(); label(c, "G", xG - 20, yc - 14, ink, 26, FONT);
+    c.fillStyle = C2; c.beginPath(); c.arc(xC, yc, 8, 0, 2 * Math.PI); c.fill(); label(c, "C", xC + 20, yc + 30, C2, 26, FONT);
+    /* размеры: цепочка CG + a, ½Lpp, Lpp */
+    dimH(c, xC, x1, yd, "a = " + f(a, 2) + " м", ink, FONT, true);
+    if (Math.abs(xC - xG) > 30) dimH(c, Math.min(xC, xG), Math.max(xC, xG), yd, "CG = " + f(Math.abs(CG), 2) + " м", C2, FONT, false);
+    dimH(c, xG, x1, yd + 52, "½Lpp = " + f(t.half, 2) + " м", ink, FONT, true);
+    dimH(c, x0, x1, yd + 104, "Lpp = " + f(t.Lpp, 1) + " м", ink, FONT, true);
+    /* направление разворота носа */
+    if (Math.abs(Rm) > 1e-6) {
+      var s = Rm > 0 ? 1 : -1, xb = x1 + 60, yb = yc;   /* Rm > 0: нос уходит под ветер (вниз на рисунке) */
+      c.strokeStyle = "#6a4c93"; c.lineWidth = 3; c.beginPath(); c.arc(xG, yc, xb - xG, -0.09 * s, 0.09 * s, s < 0); c.stroke();
+      var e1 = 0.09 * s, rr = xb - xG; arrow(c, xG + rr * Math.cos(e1 - 0.015 * s), yc + rr * Math.sin(e1 - 0.015 * s), xG + rr * Math.cos(e1), yc + rr * Math.sin(e1), "#6a4c93", 3, 16);
+      label(c, Rm > 0 ? "нос уваливается" : "нос приводится", xb + 8, yc + s * 120 + (s > 0 ? 0 : 10), "#6a4c93", 19, FONT, "right");
+      label(c, Rm > 0 ? "под ветер" : "к ветру", xb + 8, yc + s * 120 + (s > 0 ? 24 : 34), "#6a4c93", 19, FONT, "right");
+    }
+    /* подписи */
+    var ty = H - 112; c.font = "21px " + FONT; c.textAlign = "left"; c.fillStyle = ink;
+    c.fillText("φ = " + g0(ps) + "°, Wa = " + g0(t.W1) + " м/с:  Ca = " + f(Ca, 3) + ";  Ra = " + f(Ra, 2) + " тс;  α = " + f(al, 1) + "°;  Xa = Ra·cos α = " + f(Xa, 2) + " тс;  Ya = Ra·sin α = " + f(Ya, 2) + " тс", 40, ty);
+    c.fillText("a = " + f(a, 2) + " м;  CG = ½Lpp − a = " + f(CG, 2) + " м;  Rm = Ya·CG = " + f(Rm, 1) + " тс·м", 40, ty + 32);
+    c.fillText("C — точка приложения силы ветра, G — центр тяжести судна; ветер действует с верхнего (наветренного) борта.", 40, ty + 64);
+  }
+  /* круг СМО в положении отсчёта: указатель (индекс) внизу, В под К на линии сетки */
+  function drawSMO(cv, LK, d, r) {
+    var W = 1150, H = 1350; cv.width = W; cv.height = H; var c = cv.getContext("2d"), FONT = LK.font, ink = LK.ink || "#1b1b1b";
+    c.fillStyle = "#fff"; c.fillRect(0, 0, W, H);
+    var x = r.t2; if (!x) { label(c, "Нет данных задания 2", W / 2, H / 2, "#c1121f", 30, FONT); return; }
+    var cx = W / 2, cy = 560, Rout = 500, Rsc = 440, Rin = 410;
+    var N = Math.max(10, Math.ceil(Math.max(x.W, x.V, x.Vi) * 1.12)), cell = Rin / N;
+    /* основание с сеткой (неподвижное) */
+    c.fillStyle = "#f4f7fa"; c.beginPath(); c.arc(cx, cy, Rout, 0, 2 * Math.PI); c.fill();
+    c.save(); c.beginPath(); c.arc(cx, cy, Rin, 0, 2 * Math.PI); c.clip();
+    for (var i = -N; i <= N; i++) {
+      c.strokeStyle = i === 0 ? "#7a8a99" : i % 5 === 0 ? "#b5c2cf" : "#dde4ea"; c.lineWidth = i === 0 ? 2 : i % 5 === 0 ? 1.6 : 1;
+      c.beginPath(); c.moveTo(cx + i * cell, cy - Rin); c.lineTo(cx + i * cell, cy + Rin); c.stroke();
+      c.beginPath(); c.moveTo(cx - Rin, cy + i * cell); c.lineTo(cx + Rin, cy + i * cell); c.stroke();
+    }
+    c.restore();
+    /* верхний прозрачный круг со шкалой, повёрнут: деление Kи — у указателя (внизу) */
+    function scr(g) { return (g - x.tw.K + 180) * R; }
+    function pt(g, l) { var a = scr(g); return [cx + l * Math.sin(a), cy - l * Math.cos(a)]; }
+    c.strokeStyle = ink; c.lineWidth = 2.5; c.beginPath(); c.arc(cx, cy, Rout - 6, 0, 2 * Math.PI); c.stroke();
+    c.lineWidth = 1.5; c.beginPath(); c.arc(cx, cy, Rin, 0, 2 * Math.PI); c.stroke();
+    for (var g = 0; g < 360; g += 1) {
+      var big = g % 10 === 0, mid = g % 5 === 0; if (!mid && N > 14) continue;
+      var a1 = pt(g, Rin), a2 = pt(g, Rin + (big ? 22 : mid ? 14 : 7));
+      c.strokeStyle = ink; c.lineWidth = big ? 2 : 1; c.beginPath(); c.moveTo(a1[0], a1[1]); c.lineTo(a2[0], a2[1]); c.stroke();
+      if (big) {
+        var q = pt(g, Rin + 46); c.save(); c.translate(q[0], q[1]); c.rotate(scr(g)); c.font = (g % 90 === 0 ? "700 " : "") + "19px " + FONT; c.fillStyle = ink; c.textAlign = "center"; c.fillText(String(g), 0, 7); c.restore();
+      }
+    }
+    /* указатель (индекс) внизу */
+    c.fillStyle = C2; c.beginPath(); c.moveTo(cx, cy + Rout - 4); c.lineTo(cx - 16, cy + Rout + 26); c.lineTo(cx + 16, cy + Rout + 26); c.closePath(); c.fill();
+    label(c, "указатель (индекс): Kи = " + x.Ki + "°", cx, cy + Rout + 60, C2, 24, FONT);
+    /* диаметр через указатель */
+    c.setLineDash([10, 8]); c.strokeStyle = "#888"; c.lineWidth = 2; c.beginPath(); c.moveTo(cx, cy - Rin); c.lineTo(cx, cy + Rin); c.stroke(); c.setLineDash([]);
+    var B = pt(x.A, x.W * cell), K = pt(x.K, x.V * cell);
+    /* радиусы к точкам и шкала скоростей */
+    c.setLineDash([6, 6]); c.lineWidth = 2;
+    c.strokeStyle = C3; c.beginPath(); c.moveTo(cx, cy); c.lineTo(pt(x.A, Rin)[0], pt(x.A, Rin)[1]); c.stroke();
+    c.strokeStyle = C1; c.beginPath(); c.moveTo(cx, cy); c.lineTo(pt(x.K, Rin)[0], pt(x.K, Rin)[1]); c.stroke(); c.setLineDash([]);
+    arrow(c, cx, cy, B[0], B[1], C3, 3.5, 16); arrow(c, cx, cy, K[0], K[1], C1, 3.5, 16);
+    /* отрезок КВ — истинный ветер */
+    c.strokeStyle = C2; c.lineWidth = 2; c.setLineDash([4, 5]); c.beginPath(); c.moveTo(B[0], B[1]); c.lineTo(B[0], cy + Rin); c.stroke(); c.setLineDash([]);
+    arrow(c, K[0], K[1], B[0], B[1], C2, 5, 20);
+    [[B, "В", C3], [K, "К", C1]].forEach(function (p) { c.fillStyle = p[2]; c.beginPath(); c.arc(p[0][0], p[0][1], 8, 0, 2 * Math.PI); c.fill(); label(c, p[1], p[0][0] + 22, p[0][1] + 8, p[2], 28, FONT, "left"); });
+    c.save(); c.translate((B[0] + K[0]) / 2 + (B[0] >= cx ? 30 : -30), (B[1] + K[1]) / 2); c.rotate(-Math.PI / 2); label(c, "ВК = Vи = " + f(x.Vi, 1) + " м/с", 0, B[0] >= cx ? 8 : 8, C2, 23, FONT, "center"); c.restore();
+    c.fillStyle = ink; c.beginPath(); c.arc(cx, cy, 6, 0, 2 * Math.PI); c.fill(); var oL = oPos(cx, cy, [B, K], 26); label(c, "O", oL[0], oL[1], ink, 22, FONT);
+    /* пояснения */
+    var ty = H - 140; c.font = "22px " + FONT; c.textAlign = "left";
+    [["Масштаб: 1 деление сетки = 1 м/с.  Круг повёрнут в положение отсчёта (п. 5–6 порядка работы).", ink],
+      ["ОВ — кажущийся ветер: " + g0(x.A) + "°, Vв = " + g0(x.W) + " м/с;   ОК — судно: ИК " + g0(x.K) + "°, Vc = " + f(x.V, 1) + " м/с", ink],
+      ["В и К на одной линии, параллельной диаметру через указатель, В ниже К.", ink],
+      ["Истинный ветер: против указателя Kи = " + x.Ki + "°, ВК = Vи = " + f(x.Vi, 1) + " м/с", C2]].forEach(function (s, i) { c.fillStyle = s[1]; c.fillText(s[0], 40, ty + i * 32); });
+  }
+  /* графический способ (рис. 1.6) */
+  function drawGraf(cv, LK, d, r) {
+    var W = 1100, H = 1150; cv.width = W; cv.height = H; var c = cv.getContext("2d"), FONT = LK.font, ink = LK.ink || "#1b1b1b";
+    c.fillStyle = "#fff"; c.fillRect(0, 0, W, H);
+    var x = r.t2; if (!x) { label(c, "Нет данных задания 2", W / 2, H / 2, "#c1121f", 30, FONT); return; }
+    var cx = W / 2, cy = 500, Rr = 400, mx = Math.max(x.V, x.W, x.Vi, 1), sc = (Rr - 30) / mx;
+    function P(a, l) { return [cx + l * Math.sin(a * R), cy - l * Math.cos(a * R)]; }
+    /* оси */
+    arrow(c, cx, cy + Rr, cx, cy - Rr, ink, 2, 16); arrow(c, cx - Rr, cy, cx + Rr, cy, ink, 2, 16);
+    c.strokeStyle = ink; c.lineWidth = 2; c.beginPath(); c.moveTo(cx - Rr, cy); c.lineTo(cx + Rr, cy); c.stroke();
+    label(c, "N", cx, cy - Rr - 14, ink, 26, FONT); label(c, "S", cx, cy + Rr + 34, ink, 26, FONT); label(c, "E", cx + Rr + 22, cy + 9, ink, 26, FONT); label(c, "W", cx - Rr - 24, cy + 9, ink, 26, FONT);
+    /* масштабные окружности */
+    c.strokeStyle = "#e6e6e6"; c.lineWidth = 1; for (var k = 1; k <= Math.floor(mx + 0.999); k++) { c.beginPath(); c.arc(cx, cy, k * sc, 0, 2 * Math.PI); c.stroke(); }
+    var K = P(x.K, x.V * sc), B = P(x.A, x.W * sc), I = [cx + B[0] - K[0], cy + B[1] - K[1]];
+    c.setLineDash([8, 7]); c.strokeStyle = "#999"; c.lineWidth = 1.5; c.beginPath(); c.moveTo(B[0], B[1]); c.lineTo(I[0], I[1]); c.stroke(); c.setLineDash([]);
+    arrow(c, cx, cy, K[0], K[1], C2, 4.5, 20);
+    arrow(c, cx, cy, B[0], B[1], C1, 4.5, 20);
+    arrow(c, K[0], K[1], B[0], B[1], C3, 4.5, 20);
+    arrow(c, cx, cy, I[0], I[1], C3, 5, 22);
+    /* дуги ИК и Kи */
+    function arcA(a, rad, col) { c.strokeStyle = col; c.lineWidth = 2; c.beginPath(); c.arc(cx, cy, rad, -Math.PI / 2, -Math.PI / 2 + a * R, false); c.stroke(); }
+    arcA(x.K, 60, C2); arcA(x.tw.K, 95, C3);
+    var mK = P(x.K / 2, 80), mI = P(x.tw.K / 2, 120);
+    label(c, "ИК " + g0(x.K) + "°", mK[0] + 8, mK[1], C2, 20, FONT, "left");
+    label(c, "Kи " + x.Ki + "°", mI[0] + 8, mI[1] + 22, C3, 20, FONT, "left");
+    function tag(p, a, txt, col) { label(c, txt, p[0] + 26 * Math.sin(a * R), p[1] - 26 * Math.cos(a * R) + 9, col, 26, FONT); }
+    tag(K, x.K, "К", C2); tag(B, x.A, "В", C1); tag(I, x.tw.K, "И", C3);
+    var oL = oPos(cx, cy, [K, B, I], 28); label(c, "O", oL[0], oL[1], ink, 24, FONT);
+    var ty = H - 140; c.font = "22px " + FONT; c.textAlign = "left";
+    [["Масштаб: 1 окружность = 1 м/с", ink], ["ОК — вектор скорости судна: ИК " + g0(x.K) + "°, Vc = " + f(x.V, 1) + " м/с", C2],
+      ["ОВ — кажущийся ветер: " + g0(x.A) + "°, Vв = " + g0(x.W) + " м/с", C1], ["КВ, перенесённый в центр (ОИ ∥ КВ), — истинный ветер: Kи = " + x.Ki + "°, Vи = " + f(x.Vi, 1) + " м/с", C3]]
+      .forEach(function (s, i) { c.fillStyle = s[1]; c.fillText(s[0], 40, ty + i * 32); });
+  }
+
+  /* ======================================================================
+     Решение
+     ====================================================================== */
+  function solve(d) {
+    var warn = [], st = [], t1 = task1(d, warn), t2 = task2(d, warn), crew = d.variant || "—";
+    if (t2) t2.crew = crew;
+    var A = t1.rows.length ? extremes(t1, "Ra1") : null, M1 = t1.rows.length ? extremes(t1, "Rm1") : null, M2 = t1.rows.length ? extremes(t1, "Rm2") : null;
+    st.push({ no: 1, title: "Задание 1. Сила ветра и момент силы ветра", lines: t1.rows.length ? t1Lines(t1) : [],
+      given: "судно " + (d.ship || "—") + " в полном грузу: Lpp = " + d.Lpp + " м, Aa = " + d.Aa + " м², Ba = " + d.Ba + " м²; Wa1 = " + d.W1 + " м/с, Wa2 = " + d.W2 + " м/с; ρa = " + rhoTxt(t1) + "; Ca — табл. 1.1",
+      tables: t1.rows.length ? [tAux(t1), t12(t1)] : [], after: t1Concl(t1), figs: t1.rows.length ? ["scheme", "graphRa", "graphRm"] : [],
+      answer: A ? "Ra1 = " + f(A.mn.Ra1, 2) + "…" + f(A.mx.Ra1, 2) + " тс, Ra2 = " + f(A.mn.Ra2, 2) + "…" + f(A.mx.Ra2, 2) + " тс (max при φ = " + p3(A.mx.p) + "); Rm1 = " + f(M1.mn.Rm1, 1) + "…" + fsg(M1.mx.Rm1, 1) + " тс·м, Rm2 = " + f(M2.mn.Rm2, 1) + "…" + fsg(M2.mx.Rm2, 1) + " тс·м" : "" });
+    if (t2) {
+      st.push({ no: 2, title: "Задание 2. Направление и скорость истинного ветра (экипаж " + crew + ")",
+        given: "ИК = " + g0(t2.K) + "°, Vc = " + g0(t2.Vc) + (t2.knots ? " уз" : " м/с") + "; кажущийся ветер: " + g0(t2.A) + "°, " + g0(t2.W) + " м/с (табл. 1.3)",
+        paras: ["Круг СМО (ветрочёт):"].concat(smoSteps(t2)).concat(["Графический способ:"]).concat(grafSteps(t2)),
+        lines: t2Lines(t2, crew),
+        tables: [{ title: "Таблица 1.3 — Элементы истинного ветра", headers: ["Экипаж", "ИК, °", "Vc", "Напр. каж. ветра, °", "Vв, м/с", "Kи, °", "Vи, м/с"],
+          rows: [[String(crew), g0(t2.K), g0(t2.Vc) + (t2.knots ? " уз" : " м/с"), g0(t2.A), g0(t2.W), String(t2.Ki), f(t2.Vi, 1)]], widths: [1.7, 1.8, 2.4, 3, 2.2, 2, 2], size: 10 }],
+        figs: ["smo", "graf"], answer: "Kи = " + t2.Ki + "°, Vи = " + f(t2.Vi, 1) + " м/с" });
+    }
+    var Q = questions(t1, t2);
+    st.push({ no: 3, noLabel: "", title: "Контрольные вопросы", lines: [], paras: Q.reduce(function (a, q, i) { return a.concat([(i + 1) + ". " + q.q]).concat(q.a); }, []) });
+    return { steps: st, warn: warn, t1: t1, t2: t2, Q: Q };
+  }
+
+  /* ======================================================================
+     Отчёт Word
+     ====================================================================== */
+  function report(D, d, r, img) {
+    var t1 = r.t1, t2 = r.t2, fn = 0, s = shipOf(d.variant);
+    function fig(id, cm, cap) { fn++; img(id, cm); D.para("Рисунок " + fn + " — " + cap, { align: "center", size: 10, after: 8 }); }
+    function small(txt) { D.para(txt, { align: "left", size: 11, after: 2 }); }
+    if (D.hasTitle) { D.para("Лабораторная работа № 1", { bold: true, align: "center", size: 14, after: 0 }); D.para("«Влияние ветра на судно»", { bold: true, align: "center", size: 14, after: 8 }); }
+    D.text([{ t: "Цель: ", bold: true }, "изучить механизм влияния ветра на судно; научиться вычислять силу ветра и момент силы, стремящийся развернуть судно вокруг плоскости мидель-шпангоута; научиться определять направление и скорость истинного ветра по кругу СМО."]);
+    D.head("1. Краткая теория");
+    D.text("Ветер, обдувая надводную часть корпуса и надстройки судна, вызывает появление аэродинамических сил, стремящихся изменить его положение. Величина и направление этих сил зависят от формы и размеров надводной части судна (его парусности), а также от направления и скорости ветра. Скоростью ветра считается её среднее значение, измеренное за период более 10 минут на высоте 10 м; порывы могут превышать среднее значение примерно в полтора раза.");
+    D.text("Силу ветра, действующего на судно, вычисляют по уравнению Хьюза:");
+    D.formula("Ra = ½·ρa·Ca·(Aa·cos²φ + Ba·sin²φ)·Wa²,     (1.1)");
+    D.text("где Ra — сила ветра, тс; ρa — плотность воздуха (" + (t1.tech ? "0,000125 тс·с²/м⁴, т. е. 1,25 кг/м³ : 9,81 м/с²" : "0,00125 т/м³, или 1,25 кг/м³") + "); Ca — коэффициент силы ветра (табл. 1.1), зависящий от курсового угла ветра и обводов корпуса; Aa — проекция площади парусности на мидель, м²; Ba — проекция площади парусности на диаметральную плоскость, м²; φ — курсовой угол кажущегося ветра; Wa — скорость ветра, м/с.");
+    D.text("Расстояние от носового перпендикуляра до точки приложения силы ветра C (она тем дальше от носа, чем больше курсовой угол; при φ ≈ 90° совпадает с центром парусности) и угол действующей силы ветра (угол атаки):");
+    D.formula("a = (0,292 + 0,0023·φ)·Lpp,     (1.2)");
+    D.formula("α = [1 − 0,15·" + (t1.corr ? "(1 − φ/90)" : "(φ/90)") + " − 0,80·(1 − φ/90)³]·90.     (1.3)");
+    D.text("Сила Ra раскладывается на продольную составляющую Xa = Ra·cos α и поперечную Ya = Ra·sin α. Так как точка C и центр тяжести судна G обычно не совпадают, поперечная составляющая создаёт момент, стремящийся развернуть судно вокруг плоскости мидель-шпангоута:");
+    D.formula("Rm = CG·Ya = Ra·sin α·(½Lpp − a),     (1.4)");
+    D.text("где Rm — момент силы ветра, тс·м; CG = ½Lpp − a — расстояние между центром тяжести судна и точкой приложения силы ветра.");
+    D.text("Судно в дрейфе: точка приложения силы ветра близка к середине корпуса, т. е. к центру тяжести, поэтому ветер почти не разворачивает судно; оно дрейфует по направлению ветра, если ветер действует по траверзу или несколько впереди или позади траверза. Судно имеет ход вперёд: при траверзном ветре точка приложения силы ветра остаётся у середины корпуса, а центр вращения смещается в нос — появляется плечо, и нос приводится на ветер; при снижении скорости эта тенденция усиливается. Судно имеет ход назад: центр вращения смещается к корме (на ¼ длины от кормы), нос уходит под ветер, корма приводится на ветер; у одновинтового судна эффект усложняется действием гребного винта.");
+    D.text("Круг Севастопольской морской обсерватории (ветрочёт) служит для определения скорости и направления истинного ветра на ходу судна по измеренным элементам кажущегося ветра. Он состоит из металлического основания с миллиметровой сеткой и неподвижным индексом и вращающегося прозрачного круга с градусной шкалой.");
+
+    D.head("2. Исходные данные");
+    D.text("Экипаж № " + d.variant + " — судно № " + s.no + " «" + s.name + "» (" + s.gr + " " + s.no + "), прил. 2. Расчёт выполнен для судна в полном грузу (по летнюю грузовую марку).");
+    D.table(["Параметр", "Обозначение", "Значение"], [
+      ["Длина судна наибольшая", "Lmax, м", d.Lmax], ["Длина между перпендикулярами", "Lpp, м", d.Lpp], ["Ширина судна", "B, м", d.B], ["Осадка", "d, м", d.d],
+      ["Водоизмещение", "Δ, т", d.disp], ["Проекция площади парусности на ДП", "Ba, м²", d.Ba], ["Проекция площади парусности на мидель", "Aa, м²", d.Aa],
+      ["Скорости ветра", "Wa1; Wa2, м/с", d.W1 + "; " + d.W2], ["Плотность воздуха", "ρa", rhoTxt(t1)]], { widths: [8, 3.6, 4.4], size: 10, lefts: [0] });
+    var tab = ptsOf(d.ca);
+    if (tab.length) {
+      D.sub("Коэффициент силы ветра Ca (табл. 1.1, судно " + s.no + ", в грузу)");
+      var half = Math.ceil(tab.length / 2), w = 16.5 / (half + 1);
+      [tab.slice(0, half), tab.slice(half)].forEach(function (part) {
+        if (!part.length) return;
+        var hd = ["φ, °"].concat(part.map(function (q) { return g0(q[0]); })), rw = ["Ca"].concat(part.map(function (q) { return f(q[1], 3); }));
+        while (hd.length < half + 1) { hd.push(""); rw.push(""); }
+        D.table(hd, [rw], { widths: hd.map(function () { return w; }), size: 10 });
+      });
+      D.text("Для φ = 15° и 165°, которых нет в таблице 1.1, коэффициент Ca найден линейной интерполяцией между соседними значениями (10–20° и 160–170°).", { size: 11 });
+    }
+
+    D.head("3. Задание 1. Расчёт силы и момента силы ветра");
+    if (t1.rows.length) {
+      D.text("Вычисления выполнены по формулам (1.1)–(1.4) для курсовых углов ветра φ = " + t1.rows.map(function (q) { return g0(q.p); }).join(", ") + "° при скоростях ветра " + g0(t1.W1) + " и " + g0(t1.W2) + " м/с.");
+      t1Lines(t1).forEach(function (l, i) { if (i < 4) D.formula(l); else small(l.replace(/^\s+/, "    ")); });
+      var ax = tAux(t1); D.sub(ax.title); D.table(ax.headers, ax.rows, { widths: ax.widths, size: ax.size });
+      var tb = t12(t1); D.sub(tb.title); D.table(tb.headers, tb.rows, { widths: tb.widths, size: tb.size, lefts: [0] });
+      fig("scheme", 16, "Сила ветра и точка приложения вектора силы ветра (φ = " + g0(isFinite(num(d.phiS)) ? num(d.phiS) : 30) + "°, Wa = " + g0(t1.W1) + " м/с)");
+      fig("graphRa", 16, "График Ra = f(φ)");
+      fig("graphRm", 16, "График Rm = f(φ)");
+      D.sub("Анализ результатов");
+      t1Concl(t1).forEach(function (l) { D.text(l); });
+    } else D.text("Недостаточно исходных данных для расчёта.");
+
+    D.head("4. Задание 2. Определение направления и скорости истинного ветра");
+    if (t2) {
+      D.table(["Экипаж", "ИК, °", "Vc", "Направление кажущегося ветра, °", "Vв, м/с"], [[String(d.variant), g0(t2.K), g0(t2.Vc) + (t2.knots ? " уз" : " м/с"), g0(t2.A), g0(t2.W)]], { widths: [2, 2.2, 2.8, 6, 3], size: 10 });
+      if (t2.knots) D.text("Скорость судна в м/с: Vc = " + g0(t2.Vc) + " уз · " + f(t2.kn, 3) + " = " + f(t2.V, 1) + " м/с.");
+      D.sub("4.1. Определение с помощью круга СМО");
+      smoSteps(t2).forEach(function (l) { D.text(l); });
+      fig("smo", 13.5, "Определение элементов истинного ветра на круге СМО");
+      D.sub("4.2. Графический способ");
+      grafSteps(t2).forEach(function (l) { D.text(l); });
+      fig("graf", 13, "Определение элементов истинного ветра графическим способом");
+      D.sub("4.3. Аналитическая проверка");
+      t2Lines(t2, d.variant).slice(1).forEach(function (l) { D.formula(l.replace(/^\s+/, "").replace(/^Аналитическая проверка:\s+/, "")); });
+      D.table(["Экипаж", "ИК, °", "Vc", "Напр. каж. ветра, °", "Vв, м/с", "Kи, °", "Vи, м/с"],
+        [[String(d.variant), g0(t2.K), g0(t2.Vc) + (t2.knots ? " уз" : " м/с"), g0(t2.A), g0(t2.W), String(t2.Ki), f(t2.Vi, 1)]], { widths: [1.7, 1.8, 2.4, 3.2, 2.2, 2, 2], size: 10 });
+      D.para([{ t: "Ответ: ", bold: true }, "направление истинного ветра Kи = " + t2.Ki + "°, скорость Vи = " + f(t2.Vi, 1) + " м/с. Круг СМО, графический способ и расчёт дают одинаковый результат."], { align: "just", after: 6 });
+    } else D.text("Заполните исходные данные задания 2.");
+
+    D.head("5. Выводы");
+    var A = t1.rows.length ? extremes(t1, "Ra1") : null, M = t1.rows.length ? extremes(t1, "Rm1") : null;
+    D.text("В работе изучен механизм влияния ветра на судно и выполнен расчёт силы ветра и момента силы ветра для судна «" + s.name + "» в полном грузу при скоростях ветра " + g0(t1.W1) + " и " + g0(t1.W2) + " м/с." +
+      (A ? " Наибольшая сила ветра действует при курсовом угле " + p3(A.mx.p) + " (" + f(A.mx.Ra1, 2) + " и " + f(A.mx.Ra2, 2) + " тс), наибольший разворачивающий момент — при носовых (φ = " + p3(M.mx.p) + ") и кормовых (φ = " + p3(M.mn.p) + ") курсовых углах; при траверзном ветре момент близок к нулю." : "") +
+      " Сила и момент ветра растут пропорционально квадрату скорости ветра. При ветре с носовых курсовых углов аэродинамический момент разворачивает судно от ветра, с кормовых — приводит нос к ветру; на ходу это необходимо компенсировать перекладкой руля, а при малой скорости (у причала) — работой машины, подруливающего устройства или буксиров." +
+      (t2 ? " Направление и скорость истинного ветра, определённые по кругу СМО, графически и расчётом, совпадают: Kи = " + t2.Ki + "°, Vи = " + f(t2.Vi, 1) + " м/с." : ""));
+
+    D.head("6. Ответы на контрольные вопросы");
+    r.Q.forEach(function (q, i) { D.sub((i + 1) + ". " + q.q); q.a.forEach(function (a) { D.text(a); }); });
+
+    D.head("Список использованной литературы");
+    D.numbered(["Сливаев Б. Г. Теоретические и практические основы управления судном: учебно-методическое пособие. — Владивосток: МГУ им. адм. Г. И. Невельского, 2027. — 192 с.",
+      "Письменный М. Н. Курс лекций по маневрированию, управлению судном и безопасности мореплавания: учебное пособие. — Владивосток: МГУ им. адм. Г. И. Невельского, 2022. — 270 с.",
+      "Сливаев Б. Г. Основы маневрирования и управления судном: учебное пособие. — Владивосток: МГУ им. адм. Г. И. Невельского.",
+      "Шарлай Г. Н. Управление морским судном: учебное пособие. — Владивосток: МГУ им. адм. Г. И. Невельского."]);
+  }
+
+  App.taskWork({
+    disc: "miyus", discName: "Маневрирование и управление судном", id: "miyus-lr1", order: 1, key: "miyus-lr1", file: "МиУС_ЛР1_Влияние_ветра",
+    no: "ЛР 1", short: "ЛР №1", eyebrow: "МиУС · Лабораторная работа №1", titleKind: "Лабораторная работа",
+    title: "Влияние ветра на судно",
+    titleTopic: "Влияние ветра на судно",
+    desc: "Сила ветра и момент по уравнению Хьюза (табл. 1.2, графики Ra = f(φ), Rm = f(φ)), истинный ветер по кругу СМО и графически. 12 экипажей (судов), по умолчанию — экипаж 7.",
+    variants: 12, defaultVariant: 7, variantLabel: "Экипаж (судно)", keep: ["rho", "alf", "phiS"], summary: false,
+    variantName: function (v) { var s = shipOf(v); return "Экипаж " + v + " — " + s.name + " (" + s.gr + " " + v + ")"; },
+    varText: function (d) { var s = shipOf(d.variant); return "Экипаж № " + d.variant + ", судно № " + s.no + " «" + s.name + "»"; },
+    variantData: vd,
+    hint: "Экипаж = номер судна (прил. 2). Все исходные данные взяты из методички УС-2027 (прил. 2, табл. 1.1 и 1.3) и правятся прямо в форме. ρa и формула угла α по умолчанию — как в методичке (пояснение — в разделе «Настройки» внизу).",
+    sections: [
+      { title: "Судно (прил. 2, в полном грузу)", fields: [["ship", "Судно", { wide: true }], ["Lmax", "Lmax", { num: true, unit: "м" }], ["Lpp", "Lpp", { num: true, unit: "м" }], ["B", "Ширина B", { num: true, unit: "м" }], ["d", "Осадка d", { num: true, unit: "м" }],
+        ["disp", "Водоизмещение Δ", { num: true, unit: "т" }], ["Ba", "Парусность на ДП Ba", { num: true, unit: "м²" }], ["Aa", "Парусность на мидель Aa", { num: true, unit: "м²" }]] },
+      { title: "Задание 1. Сила и момент ветра", note: "Курсовые углы — как в табл. 1.2. Ca — столбец табл. 1.1 для своего судна; для 15° и 165° берётся линейная интерполяция.",
+        fields: [["W1", "Скорость ветра Wa1", { num: true, unit: "м/с" }], ["W2", "Скорость ветра Wa2", { num: true, unit: "м/с" }], ["phiS", "φ для схемы сил (рис. 1.1)", { num: true, unit: "°" }],
+          ["phis", "Курсовые углы φ, ° (через пробел)", { wide: true }], ["ca", "Ca по табл. 1.1: «φ Ca» по строкам", { area: true, rows: 8 }]] },
+      { title: "Задание 2. Истинный ветер (табл. 1.3)", fields: [["K", "ИК", { num: true, unit: "°" }], ["Vc", "Скорость судна Vc", { num: true }], ["vu", "Единицы Vc", { select: [["ms", "м/с"], ["kn", "узлы"]] }],
+        ["A", "Направление кажущегося ветра", { num: true, unit: "°" }], ["Wa", "Скорость кажущегося ветра Vв", { num: true, unit: "м/с" }], ["kn", "1 уз =", { num: true, unit: "м/с" }]] },
+      { title: "Настройки", note: "В методичке ρa = 0,00125 т/м³ (это массовая плотность, Ra тогда получается в кН, хотя подписано «тс»); в учебнике МГУ — 0,000125 тс·с²/м⁴, Ra в тс (в 9,8 раза меньше). В формуле (1.3) методички во втором члене стоит φ/90 — тогда при φ = 90° α = 76,5°, а не 90°; в первоисточнике, вероятно, (1 − φ/90). По умолчанию — как в методичке и на слайдах преподавателя.",
+        fields: [["rho", "Плотность воздуха ρa", { select: [["m", "0,00125 т/м³ — как в методичке"], ["t", "0,000125 тс·с²/м⁴ — как в учебнике (точно тс)"]], wide: true }],
+          ["alf", "Угол атаки α (1.3)", { select: [["m", "как в методичке: 1 − 0,15(φ/90) − 0,80(1 − φ/90)³"], ["c", "исправленная: 1 − 0,15(1 − φ/90) − 0,80(1 − φ/90)³"]], wide: true }]] }
+    ],
+    goal: "Цель: изучить механизм влияния ветра на судно; научиться вычислять силу ветра и момент силы, стремящийся развернуть судно вокруг плоскости мидель-шпангоута.",
+    figs: {
+      scheme: { caption: "Сила ветра и точка приложения вектора силы ветра (рис. 1.1)", draw: drawScheme },
+      graphRa: { caption: "График Ra = f(φ)", draw: drawRa },
+      graphRm: { caption: "График Rm = f(φ)", draw: drawRm },
+      smo: { caption: "Истинный ветер на круге СМО", draw: drawSMO },
+      graf: { caption: "Истинный ветер графическим способом (рис. 1.6)", draw: drawGraf }
+    },
+    solve: solve, report: report
+  });
+
+  return { SHIPS: SHIPS, CA: CA, CA_PHI: CA_PHI, CREW: CREW, trueWind: trueWind, alphaOf: alphaOf, solve: solve, vd: vd };
+})();
