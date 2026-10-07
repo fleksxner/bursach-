@@ -5015,6 +5015,14 @@ var LR1Engine = (function () {
   function latStr(v, dec) { return dmStr(v, dec === undefined ? 1 : dec, "NS"); }
   function sgd(v) { return (v >= 0 ? "+" : "−") + App.f(Math.abs(v), 6) + "°"; }
   function p6(v) { return v < 0 ? "(" + n6(v) + ")" : n6(v); }
+  /* вывод к п. 9: где вектор Kлок относительно Kн и Kк — считается по факту, а не одной фразой на все варианты */
+  function vecNote(o) {
+    var t = ((o.Kl - o.Kn) % 360 + 540) % 360 - 180, btw = o.dK >= 0 ? t >= 0 && t <= o.dK : t <= 0 && t >= o.dK;
+    var pos = (btw ? "находится" : "не находится") + " между векторами начального Kн = " + f(o.Kn, 1) + "° и конечного Kк = " + f(o.Kk, 1) + "° курсов";
+    if (o.P1[0] * o.P2[0] < 0) return "В северном полушарии изгиб ортодромии направлен к северному полюсу, в южном — к южному. Ортодромия пересекает экватор, и направление её изгиба меняется, поэтому вектор локсодромического курса Kлок = " + f(o.Kl, 1) + "° " + pos + ".";
+    var N = o.P1[0] + o.P2[0] >= 0;
+    return "Обе точки находятся в " + (N ? "северном" : "южном") + " полушарии, поэтому изгиб ортодромии направлен к " + (N ? "северному" : "южному") + " полюсу: на меркаторской карте ортодромия проходит ближе к полюсу, чем локсодромия (прямая линия). Вектор локсодромического курса Kлок = " + f(o.Kl, 1) + "° " + pos + ".";
+  }
   function orto(d) {
     var k = code4(d); if (!k) return null;
     var row = T4[k.v], a = [ang(row[k.rows[0] - 1][0]), ang(row[k.rows[1] - 1][1])], b = [ang(row[k.rows[2] - 1][2]), ang(row[k.rows[3] - 1][3])];
@@ -5068,72 +5076,177 @@ var LR1Engine = (function () {
     return L;
   }
   function v3(p, l) { return [Math.cos(p * R) * Math.cos(l * R), Math.cos(p * R) * Math.sin(l * R), Math.sin(p * R)]; }
+  /* ---- чертежи ЛР4: чёрно-белые, в стиле рисунков методички (Times, подстрочные индексы) ---- */
+  var FF = '"Times New Roman", Times, serif';
+  function cvInit(cv, W, H) { cv.width = W; cv.height = H; var c = cv.getContext("2d"); c.fillStyle = "#fff"; c.fillRect(0, 0, W, H); c.lineCap = "round"; c.lineJoin = "round"; return c; }
+  /* текст с индексами: "P_{N}", "K_{н} = 55,3°" */
+  function tx(c, s, x, y, o) {
+    o = o || {}; var size = o.size || 26, st = (o.italic ? "italic " : "") + (o.bold ? "700 " : ""), ss = Math.round(size * 0.68);
+    var seg = String(s).split(/(_\{[^}]*\})/).filter(Boolean).map(function (p) { return p.slice(0, 2) === "_{" ? { t: p.slice(2, -1), sub: 1 } : { t: p }; });
+    var w = 0; seg.forEach(function (g) { c.font = st + (g.sub ? ss : size) + "px " + FF; g.w = c.measureText(g.t).width + (g.sub ? 1 : 0); w += g.w; });
+    var al = o.align || "center", x0 = al === "center" ? x - w / 2 : al === "right" ? x - w : x;
+    c.fillStyle = o.color || "#111"; c.textAlign = "left"; c.textBaseline = "middle";
+    seg.forEach(function (g) { c.font = st + (g.sub ? ss : size) + "px " + FF; c.fillText(g.t, x0 + (g.sub ? 1 : 0), y + (g.sub ? size * 0.32 : 0)); x0 += g.w; });
+    return w;
+  }
+  function head(c, x, y, a, sz, col) { c.fillStyle = col || "#111"; c.beginPath(); c.moveTo(x, y); c.lineTo(x - sz * Math.cos(a - 0.36), y - sz * Math.sin(a - 0.36)); c.lineTo(x - sz * Math.cos(a + 0.36), y - sz * Math.sin(a + 0.36)); c.closePath(); c.fill(); }
+  function ln(c, pts, w, col, dash) { if (pts.length < 2) return; c.strokeStyle = col || "#111"; c.lineWidth = w || 2; c.setLineDash(dash || []); c.beginPath(); pts.forEach(function (p, i) { if (i) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); }); c.stroke(); c.setLineDash([]); }
+  function dot(c, x, y, r, col) { c.fillStyle = col || "#111"; c.beginPath(); c.arc(x, y, r, 0, 2 * Math.PI); c.fill(); }
+  function endHead(c, pts, sz, col) { var n = pts.length - 1, k = Math.max(0, n - 3); head(c, pts[n][0], pts[n][1], Math.atan2(pts[n][1] - pts[k][1], pts[n][0] - pts[k][0]), sz, col); }
+  function norm180(x) { x = ((x % 360) + 360) % 360; return x > 180 ? x - 360 : x; }
   var FIG4 = {
+    /* 1. Вид с северного полюса: 0° (Гринвич) внизу, 90°E справа, 180° вверху */
     pole: { caption: "Вид с северного полюса (направление движения и разность долгот)", draw: function (cv, LK, d, r) {
-      var o = r.o, W = 800, H = 720; cv.width = W; cv.height = H; var c = cv.getContext("2d"), FONT = '"Times New Roman", Times, serif'; c.fillStyle = "#fff"; c.fillRect(0, 0, W, H);
-      var cx = 400, cy = 370, Rr = 250; c.strokeStyle = "#222"; c.lineWidth = 3; c.beginPath(); c.arc(cx, cy, Rr, 0, 2 * Math.PI); c.stroke();
-      function P(l, rr) { var a = l * R; return [cx + rr * Math.sin(a), cy + rr * Math.cos(a)]; }   // 0° — вниз (к наблюдателю), 90°E — вправо
-      c.font = "28px " + FONT; c.fillStyle = "#111"; c.textAlign = "center";
-      [[0, "0°"], [90, "90°E"], [180, "180°"], [-90, "90°W"]].forEach(function (q) { var p = P(q[0], Rr + 34); c.fillText(q[1], p[0], p[1] + 10); });
-      c.fillText("PN", cx + 26, cy - 10); c.beginPath(); c.arc(cx, cy, 5, 0, 2 * Math.PI); c.fill();
-      [[o.P1[1], o.N1], [o.P2[1], o.N2]].forEach(function (q) { var p = P(q[0], Rr); c.strokeStyle = "#1d3557"; c.lineWidth = 2.5; c.beginPath(); c.moveTo(cx, cy); c.lineTo(p[0], p[1]); c.stroke();
-        c.fillStyle = "#1d3557"; c.beginPath(); c.arc(p[0], p[1], 8, 0, 2 * Math.PI); c.fill(); var t = P(q[0], Rr - 42); c.font = "italic 700 32px " + FONT; c.fillText(q[1], t[0], t[1] + 10); });
-      var a0 = o.P1[1], steps = 60; c.strokeStyle = "#c1121f"; c.lineWidth = 3; c.beginPath();
-      for (var i = 0; i <= steps; i++) { var p = P(a0 + o.dl * i / steps, 110); if (i) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); } c.stroke();
-      var pe = P(a0 + o.dl, 110), pb = P(a0 + o.dl * 0.93, 110); c.fillStyle = "#c1121f"; c.beginPath(); c.arc(pe[0], pe[1], 7, 0, 2 * Math.PI); c.fill(); void pb;
-      var pm = P(a0 + o.dl / 2, 150); c.font = "26px " + FONT; c.fillStyle = "#c1121f"; c.fillText("Δλ ≈ " + Math.round(o.ad) + "°" + o.ewN, pm[0], pm[1]);
-      c.fillStyle = "#111"; c.font = "700 26px " + FONT; c.textAlign = "left"; c.fillText("движение " + (o.east ? "на E" : "на W"), 20, 40);
-    } },
-    sphere: { caption: "Объёмный чертёж сферического треугольника (вид с экватора)", draw: function (cv, LK, d, r) {
-      var o = r.o, W = 800, H = 820; cv.width = W; cv.height = H; var c = cv.getContext("2d"), FONT = '"Times New Roman", Times, serif'; c.fillStyle = "#fff"; c.fillRect(0, 0, W, H);
-      var cx = 400, cy = 420, Rr = 320, lc = o.P1[1] + (o.east ? 90 : -90) - (o.east ? 1 : -1) * 8, tilt = 12 * R;
-      function pr(v) { var ca = Math.cos(-lc * R), sa = Math.sin(-lc * R), x = v[0] * ca - v[1] * sa, y = v[0] * sa + v[1] * ca, z = v[2];
-        var x2 = x * Math.cos(tilt) + z * Math.sin(tilt), z2 = -x * Math.sin(tilt) + z * Math.cos(tilt); return { X: cx + y * Rr, Y: cy - z2 * Rr, vis: x2 >= -1e-6 }; }
-      function path(pts, dashBack, col, w) { for (var i = 1; i < pts.length; i++) { var a = pr(pts[i - 1]), b = pr(pts[i]); c.strokeStyle = col; c.lineWidth = w; c.setLineDash(a.vis && b.vis ? [] : dashBack ? [8, 7] : [0, 1e9]); c.beginPath(); c.moveTo(a.X, a.Y); c.lineTo(b.X, b.Y); c.stroke(); } c.setLineDash([]); }
-      function mer(l) { var p = []; for (var t = -90; t <= 90; t += 2) p.push(v3(t, l)); return p; }
-      var A = v3(o.P1[0], o.P1[1]), B = v3(o.P2[0], o.P2[1]);
-      function slerp(a, b, t, om) { var s = Math.sin(om); return [0, 1, 2].map(function (i) { return (Math.sin((1 - t) * om) * a[i] + Math.sin(t * om) * b[i]) / s; }); }
-      var om = Math.acos(A[0] * B[0] + A[1] * B[1] + A[2] * B[2]);
-      /* заштрихованный треугольник PN–A–B */
-      var poly = []; for (var t1 = 90; t1 >= o.P1[0]; t1 -= 2) poly.push(v3(t1, o.P1[1])); for (var k = 0; k <= 40; k++) poly.push(slerp(A, B, k / 40, om)); for (var t2 = o.P2[0]; t2 <= 90; t2 += 2) poly.push(v3(t2, o.P2[1]));
-      c.fillStyle = "rgba(120,120,120,0.28)"; c.beginPath(); poly.forEach(function (v, i) { var q = pr(v); if (i) c.lineTo(q.X, q.Y); else c.moveTo(q.X, q.Y); }); c.closePath(); c.fill();
-      c.strokeStyle = "#222"; c.lineWidth = 3; c.beginPath(); c.arc(cx, cy, Rr, 0, 2 * Math.PI); c.stroke();
-      var eq = []; for (var l = 0; l <= 360; l += 3) eq.push(v3(0, l)); path(eq, true, "#555", 2);
-      path(mer(o.P1[1]), true, "#1d3557", 2.5); path(mer(o.P2[1]), true, "#1d3557", 2.5);
-      var gc = []; for (var j = 0; j <= 180; j++) gc.push(slerp(A, [-A[0], -A[1], -A[2]], j / 180, Math.PI - 1e-6));
-      var nrm = [A[1] * B[2] - A[2] * B[1], A[2] * B[0] - A[0] * B[2], A[0] * B[1] - A[1] * B[0]], nn = Math.hypot(nrm[0], nrm[1], nrm[2]); nrm = nrm.map(function (x) { return x / nn; });
-      var full = []; for (var q2 = 0; q2 <= 360; q2 += 3) { var th = q2 * R, u = A, w = [nrm[1] * A[2] - nrm[2] * A[1], nrm[2] * A[0] - nrm[0] * A[2], nrm[0] * A[1] - nrm[1] * A[0]]; full.push([0, 1, 2].map(function (i) { return u[i] * Math.cos(th) + w[i] * Math.sin(th); })); }
-      path(full, true, "#444", 2); void gc;
-      var arcAB = []; for (var m = 0; m <= 60; m++) arcAB.push(slerp(A, B, m / 60, om)); path(arcAB, false, "#c1121f", 4.5);
-      function lab(v, t, dx, dy, col) { var q = pr(v); c.fillStyle = col || "#111"; c.beginPath(); c.arc(q.X, q.Y, 7, 0, 2 * Math.PI); c.fill(); c.font = "italic 700 30px " + FONT; c.textAlign = "center"; c.fillText(t, q.X + dx, q.Y + dy); }
-      lab([0, 0, 1], "PN", 0, -16); lab([0, 0, -1], "PS", 0, 36); lab(A, o.N1, o.east ? -26 : 26, -10, "#1d3557"); lab(B, o.N2, o.east ? 26 : -26, 30, "#1d3557"); lab([-A[0], -A[1], -A[2]], o.N1 + "′", 0, 30, "#777");
-      var qa = pr(slerp(A, B, 0.06, om)), qb = pr(slerp(A, B, 0.94, om)); c.font = "italic 24px " + FONT; c.fillStyle = "#c1121f"; c.fillText("Kн", qa.X + (o.east ? 30 : -30), qa.Y - 10); c.fillText("Kк", qb.X + (o.east ? -34 : 34), qb.Y - 12);
-      var pn = pr([0, 0, 1]), qA = pr(v3((90 + o.P1[0]) / 2, o.P1[1])), qB = pr(v3((90 + o.P2[0]) / 2, o.P2[1]));
-      c.fillStyle = "#1d3557"; c.font = "italic 24px " + FONT; c.fillText("Δ" + o.N1, qA.X + (o.east ? -30 : 30), qA.Y); c.fillText("Δ" + o.N2, qB.X + (o.east ? 30 : -30), qB.Y); void pn;
-      c.fillStyle = "#333"; c.font = "22px " + FONT; c.textAlign = "left"; c.fillText("экватор", cx + Rr * 0.55, cy + 30);
-    } },
-    lat: { caption: "Схематическая шкала проверки средней широты и разности широт", draw: function (cv, LK, d, r) {
-      var o = r.o, p1 = o.P1[0], p2 = o.P2[0], W = 800, H = 760; cv.width = W; cv.height = H; var c = cv.getContext("2d"), FONT = '"Times New Roman", Times, serif'; c.fillStyle = "#fff"; c.fillRect(0, 0, W, H);
-      var lo = Math.floor(Math.min(p1, p2, 0) / 10) * 10 - 10, hi = Math.ceil(Math.max(p1, p2, 0) / 10) * 10 + 10, y0 = 50, y1 = H - 50; function Y(p) { return y1 - (y1 - y0) * (p - lo) / (hi - lo); }
-      c.strokeStyle = "#222"; c.fillStyle = "#222"; c.lineWidth = 2; c.textAlign = "left";
-      for (var p = lo; p <= hi; p += 10) { c.beginPath(); c.moveTo(320, Y(p)); c.lineTo(370, Y(p)); c.stroke(); c.font = (p === 0 ? "700 " : "") + "26px " + FONT; c.fillText(p === 0 ? "φ = 0°" : Math.abs(p) + "°" + (p > 0 ? "N" : "S"), 380, Y(p) + 9); }
-      c.strokeStyle = "#111"; c.lineWidth = 4; c.beginPath(); c.moveTo(150, Y(p1)); c.lineTo(150, Y(p2)); c.stroke(); var dir = p2 > p1 ? 1 : -1; c.beginPath(); c.moveTo(150, Y(p2)); c.lineTo(140, Y(p2) + dir * 22); c.lineTo(160, Y(p2) + dir * 22); c.fill();
-      [[p1, "φ" + o.N1], [p2, "φ" + o.N2]].forEach(function (q) { c.beginPath(); c.arc(150, Y(q[0]), 8, 0, 2 * Math.PI); c.fill(); c.font = "italic 28px " + FONT; c.fillText(q[1], 60, Y(q[0]) + 8); });
-      c.font = "700 26px " + FONT; c.fillText("Δφ", 40, Y((p1 + p2) / 2) - 8); c.font = "24px " + FONT; c.fillText("≈ " + Math.round(Math.abs(o.dp)) + "° " + o.nsN, 30, Y((p1 + p2) / 2) + 24);
-      c.lineWidth = 3; c.beginPath(); c.moveTo(620, Y(p1)); c.lineTo(620, Y(p2)); c.stroke(); [p1, p2].forEach(function (q) { c.beginPath(); c.arc(620, Y(q), 7, 0, 2 * Math.PI); c.fill(); });
-      c.fillStyle = "#c1121f"; c.beginPath(); c.moveTo(600, Y(o.pm)); c.lineTo(565, Y(o.pm) - 13); c.lineTo(565, Y(o.pm) + 13); c.fill();
-      c.font = "700 26px " + FONT; c.fillText("φср", 640, Y(o.pm) - 6); c.font = "24px " + FONT; c.fillText("≈ " + Math.round(Math.abs(o.pm)) + "° " + (o.pm >= 0 ? "N" : "S"), 640, Y(o.pm) + 24);
-    } },
-    vec: { caption: "Схематическое изображение векторов Kн, Kк, Kлок", draw: function (cv, LK, d, r) {
-      var o = r.o, W = 800, H = 520; cv.width = W; cv.height = H; var c = cv.getContext("2d"), FONT = '"Times New Roman", Times, serif'; c.fillStyle = "#fff"; c.fillRect(0, 0, W, H);
-      var cx = 400, cy = 260, L2 = 220;
-      c.strokeStyle = "#999"; c.lineWidth = 1.5; c.setLineDash([5, 6]); c.beginPath(); c.moveTo(cx, cy - 240); c.lineTo(cx, cy + 240); c.stroke(); c.setLineDash([]);
-      c.fillStyle = "#555"; c.font = "22px " + FONT; c.textAlign = "center"; c.fillText("N", cx, 22);
-      [[o.Kn, "Kн " + f(o.Kn, 1) + "°", "#c1121f", false], [o.Kk, "Kк " + f(o.Kk, 1) + "°", "#1d3557", false], [o.Kl, "Kлок " + f(o.Kl, 1) + "°", "#2a9d8f", true]].forEach(function (q, i) {
-        var a = q[0] * R, x = cx + L2 * Math.sin(a), y = cy - L2 * Math.cos(a); c.strokeStyle = q[2]; c.fillStyle = q[2]; c.lineWidth = 4; c.setLineDash(q[3] ? [12, 8] : []);
-        c.beginPath(); c.moveTo(cx, cy); c.lineTo(x, y); c.stroke(); c.setLineDash([]); var an = Math.atan2(y - cy, x - cx); c.beginPath(); c.moveTo(x, y); c.lineTo(x - 20 * Math.cos(an - 0.35), y - 20 * Math.sin(an - 0.35)); c.lineTo(x - 20 * Math.cos(an + 0.35), y - 20 * Math.sin(an + 0.35)); c.fill();
-        c.font = "italic 26px " + FONT; c.textAlign = x >= cx ? "left" : "right"; c.fillText(q[1], x + (x >= cx ? 10 : -10), y + 8 + i * 4);
+      var o = r.o, W = 960, H = 900, c = cvInit(cv, W, H), cx = 480, cy = 440, Rr = 255;
+      function P(l, rr) { var a = l * R; return [cx + rr * Math.sin(a), cy + rr * Math.cos(a)]; }
+      function arcPts(l0, dl, rr) { var p = [], n = Math.max(8, Math.ceil(Math.abs(dl) / 2)); for (var i = 0; i <= n; i++) p.push(P(l0 + dl * i / n, rr)); return p; }
+      var lA = o.N1 === "A" ? o.P1[1] : o.P2[1], lB = o.N1 === "A" ? o.P2[1] : o.P1[1];
+      ln(c, [[cx - Rr - 18, cy], [cx + Rr + 18, cy]], 1.5, "#999", [8, 7]); ln(c, [[cx, cy - Rr - 18], [cx, cy]], 1.5, "#999", [8, 7]);
+      c.strokeStyle = "#111"; c.lineWidth = 3; c.beginPath(); c.arc(cx, cy, Rr, 0, 2 * Math.PI); c.stroke();
+      ln(c, [[cx, cy], P(0, Rr + 26)], 3, "#111");
+      /* подписи 0°, 90°E, 180°, 90°W: снаружи, а если рядом меридиан точки — внутри круга */
+      [[0, "0°"], [90, "90°E"], [180, "180°"], [-90, "90°W"]].forEach(function (q) {
+        var near = [lA, lB].some(function (l) { return Math.abs(norm180(l - q[0])) < 13; }), p = P(q[0], near ? Rr - 36 : Rr + (q[0] === 0 ? 50 : 40));
+        tx(c, q[1], p[0], p[1], { size: 26, bold: true });
       });
+      tx(c, "меридиан Гринвича", cx, cy + Rr + 84, { size: 24 });
+      /* дуги λA и λB от Гринвича */
+      [[lA, "A", 0.30], [lB, "B", 0.47]].forEach(function (q) {
+        if (Math.abs(q[0]) < 6) return; var pts = arcPts(0, q[0], Rr * q[2]); ln(c, pts, 2, "#333"); endHead(c, pts, 16, "#333");
+        var m = P(q[0] / 2, Rr * q[2] + 26); tx(c, "λ_{" + q[1] + "}", m[0], m[1], { size: 26, italic: true });
+      });
+      /* меридианы точек */
+      [[o.P1[1], o.N1], [o.P2[1], o.N2]].forEach(function (q) {
+        ln(c, [[cx, cy], P(q[0], Rr + 14)], 2.6, "#111"); var p = P(q[0], Rr); dot(c, p[0], p[1], 7.5);
+        var t = P(q[0], Rr + 40); tx(c, q[1], t[0], t[1], { size: 34, italic: true, bold: true });
+      });
+      /* Δλ — кратчайшая дуга от точки отхода к точке прихода */
+      var r3 = Rr * 0.80, pts = arcPts(o.P1[1], o.dl, r3); ln(c, pts, 3.2, "#111"); endHead(c, pts, 22);
+      var mid = o.P1[1] + o.dl / 2, s = Math.sin(mid * R), crd = [0, 90, 180, -90].some(function (q) { return Math.abs(norm180(mid - q)) < 16; });
+      var rl = o.ad < 34 ? Rr + 96 : Rr + (crd ? (Math.abs(norm180(mid)) < 16 ? 124 : 82) : 44), lp = P(mid, rl);
+      tx(c, "Δλ ≈ " + Math.round(o.ad) + "° " + o.ewN, lp[0], lp[1], { size: 27, bold: true, align: s > 0.45 ? "left" : s < -0.45 ? "right" : "center" });
+      dot(c, cx, cy, 5); tx(c, "P_{N}", cx + 14, cy + 26, { size: 28, align: "left" });
+    } },
+    /* 2. Объёмный чертёж (вид с экватора): меридиан точки отхода — крайний (слева при движении на E, справа — на W) */
+    sphere: { caption: "Объёмный чертёж сферического треугольника (вид с экватора)", draw: function (cv, LK, d, r) {
+      var o = r.o, W = 900, H = 900, c = cvInit(cv, W, H), cx = 450, cy = 450, Rr = 315, k = 0.17, sg = o.east ? 1 : -1;
+      function pr(v) { return [cx - sg * Rr * v[0], cy - Rr * v[2] + k * Rr * v[1]]; }
+      function pt(f, u) { return [Math.cos(f * R) * Math.cos(u * R), Math.cos(f * R) * Math.sin(u * R), Math.sin(f * R)]; }
+      function mer(u, f0, f1) { var p = [], n = Math.max(6, Math.ceil(Math.abs(f1 - f0) / 2)); for (var i = 0; i <= n; i++) p.push(pr(pt(f0 + (f1 - f0) * i / n, u))); return p; }
+      var A = pt(o.P1[0], 0), B = pt(o.P2[0], o.ad), dAB = A[0] * B[0] + A[1] * B[1] + A[2] * B[2], om = Math.acos(Math.max(-1, Math.min(1, dAB)));
+      var e2 = [B[0] - dAB * A[0], B[1] - dAB * A[1], B[2] - dAB * A[2]], nn = Math.hypot(e2[0], e2[1], e2[2]); e2 = e2.map(function (x) { return x / nn; });
+      function gc(t) { return [Math.cos(t) * A[0] + Math.sin(t) * e2[0], Math.cos(t) * A[1] + Math.sin(t) * e2[1], Math.cos(t) * A[2] + Math.sin(t) * e2[2]]; }
+      function gcPts(t0, t1) { var p = [], n = Math.max(6, Math.ceil(Math.abs(t1 - t0) / R / 2)); for (var i = 0; i <= n; i++) p.push(pr(gc(t0 + (t1 - t0) * i / n))); return p; }
+      function eq(u0, u1) { var p = [], n = Math.max(6, Math.ceil(Math.abs(u1 - u0) / 2)); for (var i = 0; i <= n; i++) p.push(pr(pt(0, u0 + (u1 - u0) * i / n))); return p; }
+      /* заштрихованный треугольник PN – A – B */
+      var tri = mer(0, 90, o.P1[0]).concat(gcPts(0, om), mer(o.ad, o.P2[0], 90));
+      c.fillStyle = "rgba(0,0,0,0.13)"; c.beginPath(); tri.forEach(function (p, i) { if (i) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); }); c.closePath(); c.fill();
+      ln(c, gcPts(Math.PI, 2 * Math.PI), 1.6, "#777", [7, 7]);                 // невидимая половина большого круга
+      c.strokeStyle = "#111"; c.lineWidth = 3; c.beginPath(); c.arc(cx, cy, Rr, 0, 2 * Math.PI); c.stroke();
+      ln(c, [[cx, cy - Rr - 50], [cx, cy + Rr + 50]], 2, "#111", [14, 9]);      // ось PN–PS
+      ln(c, [[cx - Rr, cy], [cx + Rr, cy]], 2, "#111", [14, 9]);                // e – q
+      ln(c, eq(0, 180), 2.2, "#111");                                          // видимая половина экватора
+      ln(c, mer(o.ad, -90, 90), 2.2, "#111");                                  // меридиан точки прихода
+      var Ap = pr(A), A2 = pr([-A[0], -A[1], -A[2]]);
+      ln(c, [Ap, A2], 1.5, "#555", [6, 6]);                                    // A – A′ через центр
+      ln(c, gcPts(om, Math.PI), 1.7, "#555");                                  // продолжение ортодромии до A′
+      var ort = gcPts(0, om); ln(c, ort, 4.2, "#111");                         // ортодромия
+      var mi = Math.floor(ort.length / 2); head(c, ort[mi][0], ort[mi][1], Math.atan2(ort[mi + 1][1] - ort[mi - 1][1], ort[mi + 1][0] - ort[mi - 1][0]), 24);
+      var dq = eq(0, o.ad); ln(c, dq, 3.4, "#111"); endHead(c, dq, 22);        // Δλ по экватору
+      var dm = pr(pt(0, o.ad / 2)); tx(c, "Δλ", dm[0], dm[1] + 30, { size: 28, italic: true });
+      /* курсы: дуга по часовой стрелке от направления на N до направления движения */
+      function course(f, u, dirV, lab) {
+        var p = pr(pt(f, u)), nv = [-Math.sin(f * R) * Math.cos(u * R), -Math.sin(f * R) * Math.sin(u * R), Math.cos(f * R)];
+        function sa(v) { return Math.atan2(-Rr * v[2] + k * Rr * v[1], -sg * Rr * v[0]); }
+        var a0 = sa(nv), a1 = sa(dirV), rr = 40; if (a1 < a0) a1 += 2 * Math.PI;
+        c.strokeStyle = "#111"; c.lineWidth = 2; c.beginPath(); c.arc(p[0], p[1], rr, a0, a1, false); c.stroke();
+        head(c, p[0] + rr * Math.cos(a1), p[1] + rr * Math.sin(a1), a1 + Math.PI / 2, 13);
+        var am = (a0 + a1) / 2; tx(c, lab, p[0] + (rr + 26) * Math.cos(am), p[1] + (rr + 24) * Math.sin(am), { size: 28, italic: true, bold: true });
+        return [a0, a1];
+      }
+      course(o.P1[0], 0, e2, "K_{н}");
+      var kk = course(o.P2[0], o.ad, [-Math.sin(om) * A[0] + Math.cos(om) * e2[0], -Math.sin(om) * A[1] + Math.cos(om) * e2[1], -Math.sin(om) * A[2] + Math.cos(om) * e2[2]], "K_{к}");
+      /* точки и подписи */
+      var Bp = pr(B), PN = [cx, cy - Rr], PS = [cx, cy + Rr];
+      dot(c, Ap[0], Ap[1], 7.5); dot(c, Bp[0], Bp[1], 7.5); dot(c, A2[0], A2[1], 6, "#444"); dot(c, PN[0], PN[1], 5); dot(c, PS[0], PS[1], 5);
+      function outw(p, dd) { var vx = p[0] - cx, vy = p[1] - cy, h = Math.hypot(vx, vy) || 1; return [p[0] + vx / h * dd, p[1] + vy / h * dd]; }
+      var la = outw(Ap, 34); tx(c, o.N1, la[0], la[1], { size: 34, italic: true, bold: true });
+      var la2 = outw(A2, 34); tx(c, o.N1 + "′", la2[0], la2[1], { size: 30, italic: true });
+      /* свободный сектор у точки прихода: заняты дуга Kк, меридиан (на N и S) и ортодромия (назад и вперёд) */
+      var occ = [kk[0], kk[1], kk[0] + Math.PI, kk[1] + Math.PI].map(function (a) { return ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI); }), best = 0, bg = -1;
+      for (var g = 0; g < 360; g += 5) { var a = g * R, inArc = ((a - kk[0]) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) <= ((kk[1] - kk[0]) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) + 0.35;
+        if (inArc) continue; var dmin = Math.min.apply(null, occ.map(function (b) { var x = Math.abs(a - b) % (2 * Math.PI); return Math.min(x, 2 * Math.PI - x); })); if (dmin > bg) { bg = dmin; best = a; } }
+      var lb = [Bp[0] + 34 * Math.cos(best), Bp[1] + 34 * Math.sin(best)];
+      tx(c, o.N2, lb[0], lb[1], { size: 34, italic: true, bold: true });
+      tx(c, "P_{N}", cx + 16, PN[1] - 28, { size: 30, align: "left" }); tx(c, "P_{S}", cx + 16, PS[1] + 30, { size: 30, align: "left" });
+      var busy = function (x) { return [Ap, Bp, A2].some(function (p) { return Math.hypot(p[0] - x, p[1] - cy) < 46; }); };
+      tx(c, "e", cx - Rr - 24, cy + (busy(cx - Rr) ? 40 : 0), { size: 30, italic: true }); tx(c, "q", cx + Rr + 24, cy + (busy(cx + Rr) ? 40 : 0), { size: 30, italic: true });
+      var fa = outw(pr(pt(o.P1[0] / 2, 0)), 36); if (Math.abs(o.P1[0]) > 8) tx(c, "φ_{" + o.N1 + "}", fa[0], fa[1], { size: 28, italic: true });
+      var fb = pr(pt(o.P2[0] / 2, o.ad)); if (Math.abs(o.P2[0]) > 8) tx(c, "φ_{" + o.N2 + "}", fb[0] + sg * 14, fb[1], { size: 28, italic: true, align: sg > 0 ? "left" : "right" });
+      var q1 = pr(pt(76, 0)), q2 = pr(pt(76, o.ad)); tx(c, "Δλ", (q1[0] + q2[0]) / 2, (q1[1] + q2[1]) / 2 + 16, { size: 24, italic: true });
+    } },
+    /* 3. Схематическая шкала разности широт и средней широты */
+    lat: { caption: "Схематическая шкала проверки средней широты и разности широт", draw: function (cv, LK, d, r) {
+      var o = r.o, p1 = o.P1[0], p2 = o.P2[0], W = 900, H = 780, c = cvInit(cv, W, H);
+      var mn = Math.min(p1, p2), mx = Math.max(p1, p2);
+      var step = [1, 2, 5, 10, 20].filter(function (s) { return Math.ceil(mx / s) - Math.floor(mn / s) + 2 <= 13; })[0] || 20;
+      var lo = Math.max(-90, Math.floor(mn / step) * step - step), hi = Math.min(90, Math.ceil(mx / step) * step + step), y0 = 60, y1 = H - 60;
+      function Y(p) { return y0 + (hi - p) / (hi - lo) * (y1 - y0); }
+      for (var p = lo; p <= hi + 1e-9; p += step) {
+        ln(c, [[430, Y(p)], [485, Y(p)]], 3, "#111");
+        tx(c, p === 0 ? "φ = 0°" : Math.abs(p) + "°" + (p > 0 ? "N" : "S"), 500, Y(p), { size: 26, bold: p === 0, align: "left" });
+      }
+      var xa = 260, ya = Y(p1), yb = Y(p2);
+      ln(c, [[xa, ya], [415, ya]], 1.5, "#777", [7, 6]); ln(c, [[xa, yb], [415, yb]], 1.5, "#777", [7, 6]);
+      ln(c, [[xa, ya], [xa, yb - (yb > ya ? 14 : -14)]], 3.5, "#111"); head(c, xa, yb, yb > ya ? Math.PI / 2 : -Math.PI / 2, 26);
+      dot(c, xa, ya, 8); dot(c, xa, yb, 8);
+      tx(c, "φ_{" + o.N1 + "}", xa - 26, ya, { size: 30, italic: true, align: "right" }); tx(c, "φ_{" + o.N2 + "}", xa - 26, yb, { size: 30, italic: true, align: "right" });
+      var ym = (ya + yb) / 2, xl = Math.abs(yb - ya) < 140 ? xa - 82 : xa - 26;
+      tx(c, "Δφ", xl, ym - 17, { size: 28, italic: true, bold: true, align: "right" }); tx(c, "≈ " + latStr(o.dp), xl, ym + 17, { size: 24, align: "right" });
+      var xr = 690; ln(c, [[xr, ya], [xr, yb]], 3, "#111"); dot(c, xr, ya, 8); dot(c, xr, yb, 8);
+      var yp = Y(o.pm); c.fillStyle = "#111"; c.beginPath(); c.moveTo(xr + 4, yp); c.lineTo(xr + 44, yp - 15); c.lineTo(xr + 44, yp + 15); c.closePath(); c.fill();
+      tx(c, "φ_{ср}", xr + 56, yp - 17, { size: 28, italic: true, bold: true, align: "left" }); tx(c, "≈ " + latStr(o.pm), xr + 56, yp + 17, { size: 24, align: "left" });
+    } },
+    /* 4. Векторы Kн, Kк, Kлок + схема ортодромии и локсодромии в меркаторской проекции */
+    vec: { caption: "Схематическое изображение векторов Kн, Kк, Kлок и линий ортодромии и локсодромии", draw: function (cv, LK, d, r) {
+      var o = r.o, W = 1640, H = 640, c = cvInit(cv, W, H), cx = 400, cy = 320, L2 = 195;
+      ln(c, [[cx, cy - L2 - 40], [cx, cy + L2 + 40]], 1.5, "#999", [8, 7]); tx(c, "N", cx, cy - L2 - 58, { size: 24, color: "#555" });
+      var labs = [];
+      [[o.Kn, "K_{н}", false], [o.Kk, "K_{к}", false], [o.Kl, "K_{лок}", true]].forEach(function (q) {
+        var a = q[0] * R, x = cx + L2 * Math.sin(a), y = cy - L2 * Math.cos(a), sc = Math.atan2(y - cy, x - cx);
+        ln(c, [[cx, cy], [x - 12 * Math.cos(sc), y - 12 * Math.sin(sc)]], 3.4, "#111", q[2] ? [16, 10] : []); head(c, x, y, sc, 24);
+        var s = Math.sin(a); labs.push({ t: q[1] + " = " + f(q[0], 1) + "°", x: x + 18 * Math.sin(a), y: y - 18 * Math.cos(a) - (Math.abs(s) < 0.3 ? 14 * Math.cos(a) : 0), al: s > 0.3 ? "left" : s < -0.3 ? "right" : "center" });
+      });
+      labs.sort(function (a, b) { return a.y - b.y; }); for (var i = 1; i < labs.length; i++) if (labs[i].y - labs[i - 1].y < 34 && labs[i].al === labs[i - 1].al) labs[i].y = labs[i - 1].y + 34;
+      labs.forEach(function (lb) { tx(c, lb.t, lb.x, lb.y, { size: 27, italic: true, align: lb.al }); });
+      dot(c, cx, cy, 5);
+      /* правая схема: меркаторская проекция, ортодромия — серая кривая, локсодромия — пунктир (прямая) */
+      function MP(p) { return 3437.75 * Math.log(Math.tan((45 + p / 2) * R)); }
+      var A = v3(o.P1[0], o.P1[1]), B = v3(o.P2[0], o.P2[1]), om = o.S * R, sOm = Math.sin(om), raw = [];
+      for (var j = 0; j <= 80; j++) {
+        var t = j / 80, a1 = Math.sin((1 - t) * om) / sOm, b1 = Math.sin(t * om) / sOm, v = [0, 1, 2].map(function (n) { return a1 * A[n] + b1 * B[n]; });
+        var lat = Math.asin(Math.max(-1, Math.min(1, v[2]))) / R, dlon = norm180(Math.atan2(v[1], v[0]) / R - o.P1[1]);
+        if (o.east && dlon < -90) dlon += 360; if (!o.east && dlon > 90) dlon -= 360; raw.push([dlon * 60, MP(lat), lat]);
+      }
+      var lox = [[0, MP(o.P1[0])], [o.dl * 60, MP(o.P2[0])]], all = raw.concat(lox);
+      var xs = all.map(function (q) { return q[0]; }), ys = all.map(function (q) { return q[1]; });
+      var cross = o.P1[0] * o.P2[0] < 0 || Math.min.apply(null, ys) < 0 && Math.max.apply(null, ys) > 0; if (cross) ys.push(0);
+      var X0 = Math.min.apply(null, xs), X1 = Math.max.apply(null, xs), Y0 = Math.min.apply(null, ys), Y1 = Math.max.apply(null, ys);
+      var bx = 880, by = 90, bw = 690, bh = 400, xr = Math.max(X1 - X0, 1), yr = Math.max(Y1 - Y0, 1);
+      var sx = Math.min(bw / xr, bh / yr), sy = sx; if (yr * sy < 0.35 * bh) sy = 0.35 * bh / yr; if (xr * sx < 0.35 * bw) sx = 0.35 * bw / xr;
+      var ox = bx + (bw - xr * sx) / 2, oy = by + (bh - yr * sy) / 2;
+      function M(q) { return [ox + (q[0] - X0) * sx, oy + (Y1 - q[1]) * sy]; }
+      if (cross) { var e0 = M([X0, 0]), e1 = M([X1, 0]); ln(c, [[bx - 10, e0[1]], [bx + bw + 10, e1[1]]], 2.6, "#111"); tx(c, "экватор", bx + bw - 10, e0[1] - 20, { size: 24, align: "right" }); }
+      var op = raw.map(M), lp = lox.map(M);
+      ln(c, op, 7, "#8a8a8a"); endHead(c, op, 26, "#8a8a8a");
+      ln(c, [lp[0], [lp[1][0] - 14 * Math.cos(Math.atan2(lp[1][1] - lp[0][1], lp[1][0] - lp[0][0])), lp[1][1] - 14 * Math.sin(Math.atan2(lp[1][1] - lp[0][1], lp[1][0] - lp[0][0]))]], 3.2, "#111", [16, 10]);
+      head(c, lp[1][0], lp[1][1], Math.atan2(lp[1][1] - lp[0][1], lp[1][0] - lp[0][0]), 22);
+      dot(c, lp[0][0], lp[0][1], 7.5); dot(c, lp[1][0], lp[1][1], 7.5);
+      var dx = lp[1][0] > lp[0][0] ? 1 : -1;
+      tx(c, o.N1, lp[0][0] - dx * 26, lp[0][1] - 26, { size: 32, italic: true, bold: true }); tx(c, o.N2, lp[1][0] + dx * 26, lp[1][1] + 28, { size: 32, italic: true, bold: true });
+      var ly = H - 60; ln(c, [[920, ly], [1010, ly]], 7, "#8a8a8a"); tx(c, "ортодромия", 1025, ly, { size: 24, align: "left" });
+      ln(c, [[1220, ly], [1310, ly]], 3.2, "#111", [16, 10]); tx(c, "локсодромия", 1325, ly, { size: 24, align: "left" });
+      tx(c, "(меркаторская проекция, схема)", 1225, 40, { size: 22, color: "#555" });
     } }
   };
   App.taskWork(Object.assign({}, base, {
@@ -5159,7 +5272,7 @@ var LR1Engine = (function () {
       st.push({ no: 8, noLabel: "7) ", title: "Разность широт, средняя широта, угол сферического сближения меридианов", figs: ["lat"], lines: L.G, answer: "γ = " + f(o.gam, 1) + "° (ΔK = " + f(o.dK, 1) + "°)" });
       st.push({ no: 9, noLabel: "8) ", title: "Элементы локсодромии", lines: L.L, tables: [{ headers: ["", "|φ" + o.N1 + "| = " + App.f(Math.abs(o.P1[0]), 6) + "°" + (o.P1[0] >= 0 ? "N" : "S"), "|φ" + o.N2 + "| = " + App.f(Math.abs(o.P2[0]), 6) + "°" + (o.P2[0] >= 0 ? "N" : "S")], rows: L.MP, widths: [3.5, 5, 5] }],
         answer: "Kлок = " + f(o.Kl, 1) + "°, Sлок = " + f(o.Sl, 1) + " мили, ΔS = " + f(o.dS, 1) + " мили" });
-      st.push({ no: 10, noLabel: "9) ", title: "Схематическое изображение векторов Kн, Kк, Kлок", figs: ["vec"], lines: [], paras: ["В северном полушарии изгиб ортодромии направлен к северному полюсу, в южном — к южному. Поэтому вектор локсодромического курса не находится между векторами начального и конечного курсов" + (o.P1[0] * o.P2[0] < 0 ? " (при переходе через экватор изгиб меняет направление)." : ".")] });
+      st.push({ no: 10, noLabel: "9) ", title: "Схематическое изображение векторов Kн, Kк, Kлок", figs: ["vec"], lines: [], paras: [vecNote(o)] });
       return { steps: st, o: o, L: L };
     },
     report: function (D, d, r, img) {
@@ -5168,19 +5281,19 @@ var LR1Engine = (function () {
       if (D.hasTitle) D.para("Решение задачи № " + o.k.c, { bold: true, align: "center", size: 14, after: 6 });
       D.para("Исходные данные (вариант " + o.k.v + "-" + o.k.dir + ", от " + o.N1 + " к " + o.N2 + "):", { after: 2 });
       r.steps[0].lines.forEach(IL);
-      img("pole", 7);
+      img("pole", 9);
       D.para([{ t: "1) ", bold: true }, "Расчёт разности долгот (направления движения) и полярных расстояний"], { before: 6, after: 2 }); L.p1.forEach(IL);
-      D.para([{ t: "2) ", bold: true }, "Объёмный чертёж (вид с экватора) — построение от крайнего меридиана — " + (o.east ? "слева" : "справа")], { before: 6, after: 2 }); img("sphere", 8);
+      D.para([{ t: "2) ", bold: true }, "Объёмный чертёж (вид с экватора) — построение от крайнего меридиана — " + (o.east ? "слева" : "справа")], { before: 6, after: 2, keep: true }); img("sphere", 10);
       D.para([{ t: "3) ", bold: true }, "Вычисленные значения повторяющихся функций"], { before: 6, after: 2 });
       D.table(["", "sin", "cos", "ctg"], L.fn, { widths: [3, 3.5, 3.5, 3.5], size: 11 });
       D.para([{ t: "4) ", bold: true }, L.S[0]], { before: 4, after: 1 }); L.S.slice(1).forEach(IL);
       D.para([{ t: "5) ", bold: true }, L.A[0]], { before: 6, after: 1 }); L.A.slice(1).forEach(IL); L.B.forEach(IL);
       D.para([{ t: "6) ", bold: true }, L.K[0]], { before: 6, after: 1 }); L.K.slice(1).forEach(IL);
-      D.para([{ t: "7) ", bold: true }, "Расчёт и проверка значений разности широт и средней широты, расчёт угла сферического сближения меридианов:"], { before: 6, after: 2 });
-      img("lat", 6); L.G.forEach(IL);
+      D.para([{ t: "7) ", bold: true }, "Расчёт и проверка значений разности широт и средней широты, расчёт угла сферического сближения меридианов:"], { before: 6, after: 2, keep: true });
+      img("lat", 8.5); L.G.forEach(IL);
       D.para([{ t: "8) ", bold: true }, "Расчёт элементов локсодромии"], { before: 6, after: 2 });
       D.table(r.steps[8].tables[0].headers, L.MP, { widths: [3.5, 5, 5], size: 11 }); L.L.forEach(IL);
-      D.para([{ t: "9) ", bold: true }, "Схематическое изображение векторов Kн, Kк, Kлок"], { before: 6, after: 2 }); img("vec", 8);
+      D.para([{ t: "9) ", bold: true }, "Схематическое изображение векторов Kн, Kк, Kлок и линий ортодромии и локсодромии"], { before: 6, after: 2, keep: true }); img("vec", 16);
       D.text(r.steps[9].paras[0]);
       D.para([{ t: "Ответ: ", bold: true }, "Sорт = " + f(o.S * 60, 1) + " мили; Kн = " + f(o.Kn, 1) + "°; Kк = " + f(o.Kk, 1) + "°; ΔK = γ = " + f(o.dK, 1) + "°; Kлок = " + f(o.Kl, 1) + "°; Sлок = " + f(o.Sl, 1) + " мили; ΔS = " + f(o.dS, 1) + " мили."], { before: 6 });
     }
