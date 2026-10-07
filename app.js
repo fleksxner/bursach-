@@ -997,7 +997,8 @@ var SEAMAP={land:["30333,-3674 -164,-175 -348,-49 -55,-15 6,-19 -5,-64 -2,-64 -9
   function legPath(from, to) {
     var ck = from + "|" + to; if (cache[ck]) return cache[ck];
     var nodes = [from, to];
-    if (window.TMPRef) { var r = TMPRef.route(from, to); if (r) nodes = r.path; }    var pts = [], names = [];
+    if (window.TMPRef) { var r = TMPRef.route(from, to); if (r) nodes = r.path; }
+    var pts = [], names = [];
     for (var i = 0; i < nodes.length; i++) { var p = coord(nodes[i]); if (!p) return null; names.push([nodes[i], p]); }
     for (var j = 1; j < names.length; j++) { var seg = astar(names[j - 1][1], names[j][1]) || [names[j - 1][1], names[j][1]]; pts = pts.concat(j > 1 ? seg.slice(1) : seg); }
     return (cache[ck] = { pts: pts, nodes: names });
@@ -1996,7 +1997,8 @@ var LR1Engine = (function () {
         if (r.maxInfo.dw) out.push({ kind: "info", t: mt[1] });
       } else out.push({ kind: "bad", t: "Не удалось подобрать ни одного допустимого размещения — проверьте исходные данные." });
     } else if (!r.nFeasible) {
-      out.push({ kind: "warn", t: "Весь груз по правилам совместимости разместить нельзя. Трюмы загружены максимально возможным количеством груза без нарушений." });    } else {
+      out.push({ kind: "warn", t: "Весь груз по правилам совместимости разместить нельзя. Трюмы загружены максимально возможным количеством груза без нарушений." });
+    } else {
       out.push({ kind: "ok", t: "Найдено " + ways(r.nFeasible) + " (без деления партий — " + r.nWhole + ", с делением одной партии — " + r.nSplit + ")." +
         (r.nFeasible === 1 ? " Номер варианта ни на что не влияет." : "") });
       if (r.placementNo > r.nFeasible && r.nFeasible > 1)
@@ -2995,7 +2997,8 @@ var LR1Engine = (function () {
     });
   }
 
-  var LR1 = {    key: "tomg-lr1-v2", file: "ЛР1", no: "1", eyebrow: "Лабораторная работа №1", title: "Предварительный расчёт грузового плана судна",
+  var LR1 = {
+    key: "tomg-lr1-v2", file: "ЛР1", no: "1", eyebrow: "Лабораторная работа №1", title: "Предварительный расчёт грузового плана судна",
     voyage: false, plan: "simple", build: buildDocxLR1,
     defaults: {
       variant: "2", authors: "Колесников Я.В. и Яганов Н.С.", dw: "", stores: 0, dwDeduct: "manual",
@@ -3994,7 +3997,8 @@ var LR1Engine = (function () {
   }
   function intervals(ev, lvl, ge, t0, t1) {
     var res = [], st = null, N = Math.round((t1 - t0) * 60);
-    for (var i = 0; i <= N; i++) {      var t = t0 + i / 60, h = hAt(ev, t), ok = isFinite(h) && (ge ? h >= lvl : h < lvl);
+    for (var i = 0; i <= N; i++) {
+      var t = t0 + i / 60, h = hAt(ev, t), ok = isFinite(h) && (ge ? h >= lvl : h < lvl);
       if (ok && st === null) st = t; if ((!ok || i === N) && st !== null) { res.push([st, ok ? t : t - 1 / 60]); st = null; }
     }
     return res;
@@ -4993,7 +4997,8 @@ var LR1Engine = (function () {
      1-я — вариант, 2-я — направление (1 — от A к B, 2 — от B к A), 3–6 — строки для φA, λA, φB, λB
      ====================================================================== */
   var T4 = {
-    1: [["21°18,4' N", "140°39,6' E", "37°20,4' N", "131°53,4' W"], ["32°00,6' N", "133°44,6' E", "58°08,2' N", "121°11,3' W"], ["15°55,3' N", "125°14,6' E", "47°59,2' N", "130°33,4' W"],      ["52°22,6' N", "119°22,2' E", "34°40,1' N", "128°22,9' W"], ["28°20,4' N", "130°29,9' E", "41°11,2' N", "134°24,4' W"], ["33°13,6' N", "128°08,8' E", "52°55,3' N", "118°18,3' W"],
+    1: [["21°18,4' N", "140°39,6' E", "37°20,4' N", "131°53,4' W"], ["32°00,6' N", "133°44,6' E", "58°08,2' N", "121°11,3' W"], ["15°55,3' N", "125°14,6' E", "47°59,2' N", "130°33,4' W"],
+      ["52°22,6' N", "119°22,2' E", "34°40,1' N", "128°22,9' W"], ["28°20,4' N", "130°29,9' E", "41°11,2' N", "134°24,4' W"], ["33°13,6' N", "128°08,8' E", "52°55,3' N", "118°18,3' W"],
       ["44°28,7' N", "117°15,1' E", "24°12,8' N", "117°35,2' W"], ["41°08,5' N", "131°20,2' E", "39°38,3' N", "132°42,1' W"], ["36°33,5' N", "142°19,1' E", "30°54,6' N", "128°13,4' W"]],
     2: [["41°14,1' N", "3°03,4' E", "43°38,4' N", "65°15,5' W"], ["33°48,8' N", "2°02,2' W", "23°13,6' N", "71°17,3' W"], ["50°03,2' N", "3°40,2' E", "39°19,9' N", "75°14,4' W"],
       ["48°18,6' N", "11°43,9' W", "28°55,3' N", "69°50,2' W"], ["39°29,9' N", "1°12,2' E", "36°16,1' N", "76°00,1' W"], ["38°22,2' N", "7°03,4' E", "29°39,3' N", "74°44,2' W"],
@@ -5992,7 +5997,8 @@ var TUS = (function () {
     s.push({ no: 3, noLabel: "", title: "Дедвейт, водоизмещение и координаты ЦТ судна", paras: [],
       lines: [
         "DW = mз + mг = " + f(r.ms, 2) + " + " + f(r.mc, 2) + " = " + f(r.DW, 2) + " т",
-        "Δ = Δ0 + DW = " + f(r.D0, 2) + " + " + f(r.DW, 2) + " = " + f(r.D, 2) + " т",        "XG = (MxDW + Mx0) / Δ = (" + f(r.MxD, 1) + " + (" + f(r.Mx0, 1) + ")) / " + f(r.D, 2) + " = " + f(r.XG, 3) + " м",
+        "Δ = Δ0 + DW = " + f(r.D0, 2) + " + " + f(r.DW, 2) + " = " + f(r.D, 2) + " т",
+        "XG = (MxDW + Mx0) / Δ = (" + f(r.MxD, 1) + " + (" + f(r.Mx0, 1) + ")) / " + f(r.D, 2) + " = " + f(r.XG, 3) + " м",
         "YG = (MyDW + My0) / Δ = (" + f(r.MyD, 1) + " + " + f(r.My0, 1) + ") / " + f(r.D, 2) + " = " + f(r.YG, 3) + " м",
         "ZG = (MzDW + Mz0) / Δ = (" + f(r.MzD, 1) + " + " + f(r.Mz0, 1) + ") / " + f(r.D, 2) + " = " + f(r.ZG, 3) + " м"],
       tables: [(function (tb) { tb = Object.assign({}, tb); tb.rows = tb.rows.map(function (x) { return x.span !== void 0 ? ["— " + x.span + " —", "", "", "", "", "", "", "", ""] : x; }); return tb; })(loadTable(r))],
@@ -6991,7 +6997,8 @@ var TUS = (function () {
     legendBox(g, [{ c: "#111", w: 3.5, t: "ДСО  l(θ)" }, { c: "#8e44ad", t: "lопр = " + f(lo, 3) + " м (площади S1 = S2)" }, { c: "#c0392b", t: "начало наклонения: −θr = −" + f(tr, 0) + "°" }, { c: "#e67e22", t: "предел: " + (p.TF.v ? "угол заливания θf" : "80°") }], A.px(28), A.py(yB) - 125);
     txt(g, "ДСО: опрокидывающий момент от шквала при бортовой качке (θr = " + f(tr, 0) + "°)", W / 2, 32, { s: 21, w: "700" });
   }
-  function drawPR7(cvs, S, c, p) {    var a0 = p.w1 - p.t1r, e = p.w2[1], W = 1400, H = 1000, g = cv(cvs, W, H);
+  function drawPR7(cvs, S, c, p) {
+    var a0 = p.w1 - p.t1r, e = p.w2[1], W = 1400, H = 1000, g = cv(cvs, W, H);
     var xl = Math.floor((a0 - 4) / 10) * 10, mx = lmax(S, 80).l, mn = Math.min(lAt(S, xl), 0);
     var st = mx - mn > 4 ? 0.5 : mx - mn > 2 ? 0.2 : 0.1, yT = Math.ceil(mx * 1.1 / st) * st, yB = Math.floor(mn * 1.1 / st) * st;
     var A = axes(g, [110, 70, 1200, 830], [xl, 80, 10, 0], [yB, yT, st, 1], ["θ, °", "l, м"]);
@@ -7990,7 +7997,8 @@ var KPB = (function () {
       G.txt(g, "ЛБ", Q(-B / 2, 0)[0] - 4, oy - 4, { s: 10, a: "right", c: "#666" }); G.txt(g, "ПрБ", Q(B / 2, 0)[0] + 4, oy - 4, { s: 10, a: "left", c: "#666" });
     });
     var lx = 30; lots.forEach(function (l, i) { g.fillStyle = COLORS[i]; g.fillRect(lx, H - 30, 18, 14); g.strokeStyle = "#555"; g.strokeRect(lx, H - 30, 18, 14); G.txt(g, l.name + " — " + fv(l.N) + " × " + fv(l.m) + " т", lx + 24, H - 23, { s: 13, a: "left" }); lx += 330; });
-    G.txt(g, "Сечения бэев 20′ — вид с кормы (ПрБ справа)" + (P.mixed ? "; «40» — место занято 40-футовым" : ""), W - 30, H - 23, { s: 12.5, a: "right", c: "#444" });  }
+    G.txt(g, "Сечения бэев 20′ — вид с кормы (ПрБ справа)" + (P.mixed ? "; «40» — место занято 40-футовым" : ""), W - 30, H - 23, { s: 12.5, a: "right", c: "#444" });
+  }
 
   /* редактор: количество контейнеров каждого груза по бэям (трюм / палуба) */
   function editor(box, d, changed, ctx) {
@@ -9148,7 +9156,8 @@ var TUS_KP = (function () {
       { title: "Размещение груза", note: "Схема/таблица грузовых помещений (танков) судна по Информации. Кнопка «авто» — размещение в первом приближении по методичке; любую массу можно поправить.", fields: [["_cg", "", { custom: cgEditor }]] },
       { title: "Списки (текстом) и прочее", note: "То же, что в таблице и на схеме выше. Запасы: «номер танка; масса» (или «полностью»). Груз: «помещение; масса» (или «полностью» / «остаток»).", fields: [
         ["consts", "Постоянные дедвейта", { select: [["yes", "учитывать (из Информации)"], ["no", "не учитывать"]], wide: true }],
-        ["stMode", "Запасы", { select: [["auto", "по рекомендациям методички (авто)"], ["own", "свой список (ниже)"]] }], ["cgMode", "Груз", { select: CG_MODES }],        ["stTxt", "Запасы: танк; масса, т", { area: true, rows: 8 }], ["cgTxt", "Груз (список: «помещение; масса»; танкер — «танк; № груза; масса»; контейнеры — «бэй; трюм|палуба; № груза; количество»)", { area: true, rows: 6 }]] }
+        ["stMode", "Запасы", { select: [["auto", "по рекомендациям методички (авто)"], ["own", "свой список (ниже)"]] }], ["cgMode", "Груз", { select: CG_MODES }],
+        ["stTxt", "Запасы: танк; масса, т", { area: true, rows: 8 }], ["cgTxt", "Груз (список: «помещение; масса»; танкер — «танк; № груза; масса»; контейнеры — «бэй; трюм|палуба; № груза; количество»)", { area: true, rows: 6 }]] }
     ],
     solve: function (d) { var r = calc(d), st = steps(d, r); CAPTION = r.sh && !legacyHolds(r.sh) && KPB.E[r.kind] ? KPB.E[r.kind].caption : "Схема размещения груза в первом приближении (профиль судна по рис. 7.1 Информации об остойчивости)"; st.forEach(function (x) { x.lines = x.lines || []; x.paras = x.paras || []; }); return { steps: st, warn: r.warn, r: r }; },
     figs: { plan: { get caption() { return CAPTION; }, draw: function (cvs, pl, d, res) { var r = res.r; if (!r || !r.sh) return; if (legacyHolds(r.sh)) { if (r.cg) drawPlan(cvs, r); } else if (KPB.E[r.kind] && r.cgE) KPB.E[r.kind].draw(cvs, { sh: r.sh, cg: r.cgE, lots: r.lots, o: r.o }); } } },
@@ -10147,12 +10156,8 @@ var MIYUS = (function () {
       { name: "Rm2 при Wa = " + g0(t.W2) + " м/с", color: C2, nd: 1, outer: true, pts: t.rows.map(function (q) { return [q.p, q.Rm2]; }) }] });
   }
   /* схема (рис. 1.1): судно в плане, точка C, G, сила Ra и её составляющие */
-<<<<<<< Updated upstream
-  function drawScheme(cv, LK, d, r) {    var W = 1400, H = 930; cv.width = W; cv.height = H; var c = cv.getContext("2d"), FONT = LK.font, ink = LK.ink || "#1b1b1b";
-=======
   function drawScheme(cv, LK, d, r) {
     var W = 1400, H = 930; cv.width = W; cv.height = H; var c = cv.getContext("2d"), FONT = LK.font, ink = LK.ink || "#1b1b1b";
->>>>>>> Stashed changes
     c.fillStyle = "#fff"; c.fillRect(0, 0, W, H);
     var t = r.t1, ps = num(d.phiS); if (!isFinite(ps)) ps = 30; ps = Math.max(0, Math.min(180, ps));
     if (!t.rows.length || !isFinite(t.Lpp)) { label(c, "Нет данных для схемы", W / 2, H / 2, "#c1121f", 30, FONT); return; }
