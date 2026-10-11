@@ -164,7 +164,7 @@ var App = (function () {
     var R = rng(n * 7919 + 101), pick = function (a) { return a[Math.floor(R() * a.length)]; };
     var mar = pick([[1134, 850, 1134, 1417], [1134, 567, 1134, 1701], [1418, 850, 1418, 1418], [1134, 850, 1134, 1701], [1021, 737, 1021, 1531]]);
     var border = pick([4, 4, 6, 8]);
-    return {
+    var L = {
       no: n,
       doc: { font: pick(FONTS), scale: pick([1, 1, 1, 13 / 12, 14 / 12, 11 / 12]), line: pick([240, 252, 276, 300, 360]),
              indent: pick([1, 1.25, 1.25, 1.5, 0]), after: pick([3, 4, 6]), headSize: pick([13, 14, 14, 15, 16]),
@@ -180,7 +180,11 @@ var App = (function () {
               holdW: pick([3, 4, 5]), holdCase: pick(["upper", "upper", "title"]), legend: pick(["center", "left", "right"]),
               hatch: R() < 0.35, cargoStroke: pick(["#555", "#333", "#777"]), titleWeight: pick(["700", "600", "400"]), dash: R() < 0.25 }
     };
+    /* у №2 и дальше шрифт рисунков всегда не такой, как у №1, иначе смена оформления на чертежах не видна */
+    if (L.plan.font === CLASSIC.plan.font) L.plan.font = FIG_ALT[n % FIG_ALT.length];
+    return L;
   }
+  var FIG_ALT = ['Georgia,"DejaVu Serif",serif', 'Arial,"Liberation Sans",sans-serif', '"Times New Roman","Liberation Serif",serif', 'Verdana,"DejaVu Sans",sans-serif'];
 
   var T = CLASSIC.doc;   // оформление документа, который сейчас собирается
   function Docx(theme) {
@@ -476,17 +480,77 @@ var App = (function () {
   }
   function chiefName() { return titleInfo().student || ""; }
 
+  /* state — объект данных работы или функция, возвращающая ТЕКУЩИЙ объект данных
+     (при смене варианта объект заменяется новым — кнопка должна менять оформление у него) */
   function lookButton(state, onChange) {
+    var cur = typeof state === "function" ? state : function () { return state; };
     var wrap = el("span", { class: "look" });
     var b = el("button", { type: "button", class: "look-btn", title: "Сменить внешний вид отчёта и схемы. Данные не меняются." });
     var r = el("button", { type: "button", class: "look-reset", title: "Вернуть классическое оформление", "aria-label": "Вернуть классическое оформление" }, "№1");
-    function label() { b.innerHTML = "Оформление <b>№" + (state.look || 1) + "</b> ↻"; r.hidden = (parseInt(state.look, 10) || 1) === 1; }
-    b.addEventListener("click", function () { state.look = (parseInt(state.look, 10) || 1) + 1; label(); onChange(); toast("Оформление №" + state.look + ". Данные те же"); });
-    r.addEventListener("click", function () { state.look = 1; label(); onChange(); toast("Классическое оформление"); });
+    function label() { var st = cur() || {}; b.innerHTML = "Оформление <b>№" + (parseInt(st.look, 10) || 1) + "</b> ↻"; r.hidden = (parseInt(st.look, 10) || 1) === 1; }
+    b.addEventListener("click", function () { var st = cur(); st.look = (parseInt(st.look, 10) || 1) + 1; label(); onChange(); toast("Оформление №" + st.look + ". Данные те же"); });
+    r.addEventListener("click", function () { cur().look = 1; label(); onChange(); toast("Классическое оформление"); });
     wrap.appendChild(b); wrap.appendChild(r); wrap.sync = label; label();
     var outer = el("span", { class: "look-group" });
     outer.appendChild(titleButton(onChange)); outer.appendChild(wrap); outer.sync = label;
     return outer;
+  }
+  /* ======================================================================
+     ОФОРМЛЕНИЕ РИСУНКОВ ДЛЯ ЛЮБОЙ РАБОТЫ. Рисунок рисуется своим кодом как обычно,
+     а холст при оформлении №2 и дальше подменяет: шрифт → шрифт оформления (с поправкой
+     на ширину, чтобы подписи не налезали), чёрный → цвет оформления, толщину линий.
+     Так «Оформление №N» меняет чертежи и в тех работах, где код рисунка про оформление
+     ничего не знает. Для №1 холст не трогается — классический вид прежний.
+     ====================================================================== */
+  var NEAR_BLACK = { "#000": 1, "#000000": 1, "#111": 1, "#111111": 1, "#1b1b1b": 1, "#222": 1, "#222222": 1, "black": 1 };
+  var fitCache = {}, fitCv = null;
+  function fontFit(from, to) {
+    var key = from + "|" + to;
+    if (fitCache[key] === undefined) {
+      try {
+        fitCv = fitCv || document.createElement("canvas");
+        var g = fitCv.getContext("2d"), s = "Осадка dн = 9,752 м; θ = 30°; Wк 12,4 м/с ABCabc 0123456789";
+        g.font = "20px " + from; var a = g.measureText(s).width;
+        g.font = "20px " + to; var b = g.measureText(s).width;
+        fitCache[key] = a > 0 && b > 0 ? Math.max(0.8, Math.min(1, a / b)) : 1;
+      } catch (e) { fitCache[key] = 1; }
+    }
+    return fitCache[key];
+  }
+  /* шрифт рисунка при оформлении: рисунок уже на шрифте оформления — оставить; «зашитый» шрифт
+     того же семейства, что у оформления, — заменить на контрастный (иначе смена не видна) */
+  function famOf(f) { return String(f).split(",")[0].replace(/["']/g, "").trim().toLowerCase(); }
+  function figFont(from, to) {
+    if (from === to || famOf(from) !== famOf(to)) return to;
+    return /times|georgia|cambria|antiqua|palatino|^serif$/.test(famOf(from)) ? 'Arial,"Liberation Sans",Helvetica,sans-serif' : 'Georgia,"DejaVu Serif",serif';
+  }
+  function lookCanvas(cv, P) {
+    if (!cv || !P || cv._look) return cv;
+    var orig = cv.getContext, kw = { 3.5: 0.8, 4.5: 1.15, 5.5: 1.3 }[P.hullW] || 1.15;
+    cv._look = P;
+    cv.getContext = function (type, opt) {
+      var g = orig.call(cv, type, opt);
+      if (type !== "2d" || !g || g._look) return g;
+      var proto = Object.getPrototypeOf(g);
+      function acc(name, map) {
+        var d = Object.getOwnPropertyDescriptor(proto, name); if (!d || !d.set || !d.get) return;
+        var raw, put;
+        Object.defineProperty(g, name, { configurable: true,
+          get: function () { var v = d.get.call(g); return v === put ? raw : v; },
+          set: function (v) { raw = v; d.set.call(g, map(v)); put = d.get.call(g); } });
+      }
+      acc("font", function (v) {
+        var m = /^(.*?)(\d+(?:\.\d+)?)px(?:\s*\/\s*\S+)?\s+(.+)$/.exec(String(v)); if (!m) return v;
+        var to = figFont(m[3], P.font);
+        return m[1] + (+m[2] * fontFit(m[3], to)).toFixed(1) + "px " + to;
+      });
+      function ink(v) { return P.ink && typeof v === "string" && NEAR_BLACK[v.toLowerCase().replace(/\s+/g, "")] ? P.ink : v; }
+      acc("fillStyle", ink); acc("strokeStyle", ink);
+      if (kw !== 1) acc("lineWidth", function (v) { return v * kw; });
+      g._look = P;
+      return g;
+    };
+    return cv;
   }
   function canvasPng(canvas) {
     return new Promise(function (res) {
@@ -598,7 +662,7 @@ var App = (function () {
   return {
     discipline: discipline, register: register, start: start, go: go, page: page, setCrumbs: function (p) { setCrumbs(p); },
     f: f, plural: plural, esc: esc, el: el, store: store, toast: toast, saveFile: saveFile,
-    Docx: Docx, canvasPng: canvasPng, look: look, lookButton: lookButton,
+    Docx: Docx, canvasPng: canvasPng, look: look, lookButton: lookButton, lookCanvas: lookCanvas,
     titleInfo: titleInfo, titleButton: titleButton, chiefName: chiefName, initials: initials
   };
 })();
@@ -661,7 +725,7 @@ var App = (function () {
           setTimeout(function () { canv[id].toBlob(function (b) { App.saveFile((cfg.file || cfg.id) + "_" + id + "_вар" + S.data.variant + ".png", b); }); }, i * 1200);
         });
       });
-      var lb = App.lookButton(S.data, function () { save(); S.doc = null; showResult(); });
+      var lb = App.lookButton(function () { return S.data; }, function () { save(); S.doc = null; showResult(); });
       root.querySelector(".actions").insertBefore(lb, root.querySelector("#twDocx"));
       renderInputs(); syncTabs(); recompute();
     }
@@ -697,7 +761,7 @@ var App = (function () {
     }
     function showResult() {
       if (!S.res) solve();
-      var r = S.res, t = root.querySelector("#tw-result"), LK = App.look(S.data.look).plan;
+      var r = S.res, t = root.querySelector("#tw-result"), LK = App.look(S.data.look).plan, lkNo = parseInt(S.data.look, 10) || 1;
       var figsUsed = [];
       r.steps.forEach(function (s) { (s.figs || []).forEach(function (id) { if (figsUsed.indexOf(id) < 0) figsUsed.push(id); }); });
       t.innerHTML = (r.warn && r.warn.length ? r.warn.map(function (w) { return '<p class="note warn">' + esc(w) + "</p>"; }).join("") : "") +
@@ -716,6 +780,7 @@ var App = (function () {
       canv = {};
       t.querySelectorAll("canvas[data-fig]").forEach(function (c) {
         var id = c.dataset.fig; canv[id] = c;
+        if (lkNo > 1) App.lookCanvas(c, LK);
         try { cfg.figs[id].draw(c, LK, S.data, r); } catch (e) { c.width = 600; c.height = 60; }
       });
       if (S.tab === "preview") showPreview();
@@ -2561,7 +2626,8 @@ var LR1Engine = (function () {
     root.querySelector("#nextV").addEventListener("click", function () { step(1); });
     root.querySelector("#btnDocx").addEventListener("click", downloadDocx);
     root.querySelector("#btnPng").addEventListener("click", downloadPng);
-    var lb = App.lookButton(S.data, function () { save(); S.doc = null; if (S.res) showResult(); renderCargo(); });
+    var lb = App.lookButton(function () { return S.data; }, function () { save(); S.doc = null; if (S.res) showResult(); renderCargo(); });
+    S.lb = lb;
     root.querySelector(".actions").insertBefore(lb, root.querySelector("#btnDocx"));
     renderInputs();
     syncControls(); syncTabs();
@@ -2671,7 +2737,7 @@ var LR1Engine = (function () {
     t.querySelector("#btnReset").addEventListener("click", function () { t.querySelector("#resetConfirm").hidden = false; });
     t.querySelector("#resetNo").addEventListener("click", function () { t.querySelector("#resetConfirm").hidden = true; });
     t.querySelector("#resetYes").addEventListener("click", function () {
-      S.data = defaults(); save(); renderInputs(); syncControls(); recompute(true); App.toast("Вводные данные сброшены к варианту " + S.data.variant);
+      var lk = S.data.look; S.data = defaults(); if (lk) S.data.look = lk; save(); renderInputs(); syncControls(); recompute(true); if (S.lb) S.lb.sync(); App.toast("Вводные данные сброшены к варианту " + S.data.variant);
     });
     t.querySelector("#btnSaveVariant").addEventListener("click", function () {
       var k = String(S.data.variant || "").trim() || "без_номера", key = CFG.key + "-variant-profiles-v1";
@@ -2682,7 +2748,7 @@ var LR1Engine = (function () {
       var k = String(S.data.variant || "").trim() || "без_номера", key = CFG.key + "-variant-profiles-v1";
       var all = App.store.get(key) || {}, got = all[k];
       if (!got) return App.toast("Сохранённого варианта " + k + " пока нет. Сначала задайте исходные данные и нажмите «Запомнить текущий вариант».", true);
-      S.data = normalizeData(Object.assign(defaults(), E.clone(got))); save(); renderInputs(); syncControls(); recompute(true);
+      S.data = normalizeData(Object.assign(defaults(), { look: S.data.look }, E.clone(got))); save(); renderInputs(); syncControls(); recompute(true); if (S.lb) S.lb.sync();
       App.toast("Открыт сохранённый вариант " + k);
     });
     t.querySelector("#btnExport").addEventListener("click", function () {
@@ -2693,7 +2759,7 @@ var LR1Engine = (function () {
       file.text().then(function (txt) {
         var obj = JSON.parse(txt);
         if (!obj || !Array.isArray(obj.cargoes) || !Array.isArray(obj.holds)) throw new Error("bad");
-        S.data = Object.assign(defaults(), obj); save(); renderInputs(); syncControls(); recompute(true);
+        S.data = Object.assign(defaults(), { look: S.data.look }, obj); save(); renderInputs(); syncControls(); recompute(true); if (S.lb) S.lb.sync();
         App.toast("Вводные загружены из " + file.name);
       }).catch(function () { App.toast("Это не файл вводных данных грузового плана", true); });
       e.target.value = "";
@@ -3597,7 +3663,7 @@ var LR1Engine = (function () {
       cvL.toBlob(function (b) { App.saveFile("ЛР2_навигация_локсодромия_вар" + S.data.variant + ".png", b); });
       setTimeout(function () { cvC.toBlob(function (b) { App.saveFile("ЛР2_навигация_карта62028_вар" + S.data.variant + ".png", b); }); }, 1500);
     });
-    var lb = App.lookButton(S.data, function () { save(); S.doc = null; showResult(); });
+    var lb = App.lookButton(function () { return S.data; }, function () { save(); S.doc = null; showResult(); });
     root.querySelector(".actions").insertBefore(lb, root.querySelector("#nDocx"));
     renderInputs(); syncTabs(); recompute();
   }
