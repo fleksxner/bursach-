@@ -198,7 +198,7 @@ var App = (function () {
     o = o || {};
     var st = "font-size:" + ((o.size || 12) * T.scale / 12).toFixed(3) + "em;" + (o.bold ? "font-weight:700;" : "") + (o.italic ? "font-style:italic;" : "") + (o.color ? "color:#" + o.color + ";" : "") +
       (o.caps ? "text-transform:uppercase;" : "") + (o.under ? "text-decoration:underline;" : "");
-    return '<span style="' + st + '">' + hx(text) + "</span>";
+    return '<span style="' + st + '">' + hx(text).replace(/_\{([^}]*)\}/g, "<sub>$1</sub>") + "</span>";
   }
   function hPara(content, o) {
     o = o || {};
@@ -210,10 +210,12 @@ var App = (function () {
   var ALIGN = { left: "left", center: "center", just: "both", right: "right" };
   function run(text, o) {
     o = o || {};
+    if (/_\{[^}]*\}/.test(String(text))) return String(text).split(/(_\{[^}]*\})/).filter(function (p) { return p !== ""; }).map(function (p) {
+      return p.slice(0, 2) === "_{" && p.slice(-1) === "}" ? run(p.slice(2, -1), Object.assign({}, o, { sub: true })) : run(p, o); }).join("");
     var fn = x(T.font.name), sz = Math.round((o.size || 12) * T.scale * 2);
     var pr = '<w:rPr><w:rFonts w:ascii="' + fn + '" w:hAnsi="' + fn + '" w:cs="' + fn + '" w:eastAsia="' + fn + '"/>' +
       (o.bold ? "<w:b/>" : "") + (o.italic ? "<w:i/>" : "") + (o.caps ? "<w:caps/>" : "") + (o.color ? '<w:color w:val="' + o.color + '"/>' : "") +
-      '<w:sz w:val="' + sz + '"/><w:szCs w:val="' + sz + '"/>' + (o.under ? '<w:u w:val="single"/>' : "") + "</w:rPr>";
+      '<w:sz w:val="' + sz + '"/><w:szCs w:val="' + sz + '"/>' + (o.under ? '<w:u w:val="single"/>' : "") + (o.sub ? '<w:vertAlign w:val="subscript"/>' : "") + "</w:rPr>";
     return String(text).split("\n").map(function (line, i) {
       return "<w:r>" + pr + (i ? "<w:br/>" : "") + '<w:t xml:space="preserve">' + x(line) + "</w:t></w:r>";
     }).join("");
@@ -286,11 +288,11 @@ var App = (function () {
     var h = '<div class="dt-wrap"><table class="dt" style="font-size:' + (size * T.scale / 12).toFixed(3) + "em;border:" + (T.outer / 4).toFixed(1) + "px solid #000;--thbg:" + (T.fill ? "#" + T.fill : "transparent") +
       ";--thw:" + (T.thBold ? 700 : 400) + ";--bw:" + (T.border / 4).toFixed(1) + "px;--fa:" + T.firstAlign + '"><colgroup>' +
       headers.map(function (_, i) { return '<col style="width:' + (widths ? (widths[i] / total * 100).toFixed(2) : (100 / headers.length).toFixed(2)) + '%">'; }).join("") +
-      "</colgroup><thead><tr>" + headers.map(function (hd) { return "<th>" + hx(hd) + "</th>"; }).join("") + "</tr></thead><tbody>";
+      "</colgroup><thead><tr>" + headers.map(function (hd) { return "<th>" + hx(hd).replace(/_\{([^}]*)\}/g, "<sub>$1</sub>") + "</th>"; }).join("") + "</tr></thead><tbody>";
     rows.forEach(function (r, ri) {
       if (r && r.span !== undefined) { h += '<tr><td class="c" colspan="' + headers.length + '" style="font-weight:700;background:#F2F2F2">' + hx(r.span) + "</td></tr>"; return; }
       var bold = (o.boldLast && ri === rows.length - 1) || r.bold;
-      h += "<tr" + (bold ? ' class="b"' : "") + ">" + r.map(function (v, i) { return '<td class="' + (i ? "c" : "l") + '"' + (o.lefts && o.lefts.indexOf(i) >= 0 ? ' style="text-align:left"' : "") + '>' + hx(v) + "</td>"; }).join("") + "</tr>";
+      h += "<tr" + (bold ? ' class="b"' : "") + ">" + r.map(function (v, i) { return '<td class="' + (i ? "c" : "l") + '"' + (o.lefts && o.lefts.indexOf(i) >= 0 ? ' style="text-align:left"' : "") + '>' + hx(v).replace(/_\{([^}]*)\}/g, "<sub>$1</sub>") + "</td>"; }).join("") + "</tr>";
     });
     this.html.push(h + "</tbody></table></div>");
     return this;
@@ -760,22 +762,23 @@ var App = (function () {
       try { S.res = cfg.solve(S.data); } catch (e) { S.res = { steps: [], warn: ["Ошибка расчёта: " + e.message + ". Проверьте вводные данные."] }; }
     }
     function showResult() {
+      var rich = function (x) { return esc(x).replace(/_\{([^}]*)\}/g, "<sub>$1</sub>"); };
       if (!S.res) solve();
       var r = S.res, t = root.querySelector("#tw-result"), LK = App.look(S.data.look).plan, lkNo = parseInt(S.data.look, 10) || 1;
       var figsUsed = [];
       r.steps.forEach(function (s) { (s.figs || []).forEach(function (id) { if (figsUsed.indexOf(id) < 0) figsUsed.push(id); }); });
-      t.innerHTML = (r.warn && r.warn.length ? r.warn.map(function (w) { return '<p class="note warn">' + esc(w) + "</p>"; }).join("") : "") +
+      t.innerHTML = (r.warn && r.warn.length ? r.warn.map(function (w) { return '<p class="note warn">' + rich(w) + "</p>"; }).join("") : "") +
         '<div class="tscroll"><table class="data"><thead><tr><th>№</th><th class="l">Задача</th><th class="l">Ответ</th></tr></thead><tbody>' +
-        r.steps.filter(function (s) { return s.answer; }).map(function (s) { return "<tr><td>" + s.no + '</td><td class="l">' + esc(s.title) + '</td><td class="l"><b>' + esc(s.answer) + "</b></td></tr>"; }).join("") + "</tbody></table></div>" +
-        figsUsed.map(function (id) { return "<h2>" + esc(cfg.figs[id].caption) + '</h2><div class="plate"><canvas data-fig="' + id + '"></canvas></div>'; }).join("") +
+        r.steps.filter(function (s) { return s.answer; }).map(function (s) { return "<tr><td>" + s.no + '</td><td class="l">' + rich(s.title) + '</td><td class="l"><b>' + rich(s.answer) + "</b></td></tr>"; }).join("") + "</tbody></table></div>" +
+        figsUsed.map(function (id) { return "<h2>" + rich(cfg.figs[id].caption) + '</h2><div class="plate"><canvas data-fig="' + id + '"></canvas></div>'; }).join("") +
         "<h2>Подробное решение</h2>" + r.steps.map(function (s) {
-          return '<section class="blk"><h2>' + esc(s.noLabel === undefined ? "Задача " + s.no + ". " : s.noLabel) + esc(s.title) + "</h2>" + (s.given ? '<p class="small">Дано: ' + esc(s.given) + "</p>" : "") +
-            (s.paras || []).map(function (l) { return "<p>" + esc(l) + "</p>"; }).join("") +
-            s.lines.map(function (l) { return '<p class="calc">' + esc(l) + "</p>"; }).join("") +
-            (s.tables || []).map(function (tb) { return (tb.title ? '<p class="small"><b>' + esc(tb.title) + "</b></p>" : "") + '<div class="tscroll"><table class="data"><thead><tr>' + tb.headers.map(function (h) { return "<th>" + esc(h) + "</th>"; }).join("") + "</tr></thead><tbody>" +
-              tb.rows.map(function (rw) { if (rw && rw.span !== undefined) return '<tr><td class="l" colspan="' + tb.headers.length + '"><b>' + esc(rw.span) + "</b></td></tr>"; return "<tr>" + rw.map(function (v, i) { return "<td" + (i && !tb.wrap ? "" : ' class="l"') + ">" + (rw.bold ? "<b>" + esc(v) + "</b>" : esc(v)) + "</td>"; }).join("") + "</tr>"; }).join("") + "</tbody></table></div>"; }).join("") +
-            (s.after || []).map(function (l) { return "<p>" + esc(l) + "</p>"; }).join("") +
-            (s.answer ? "<p><b>" + esc(s.answerLabel || "Ответ") + ": " + esc(s.answer) + "</b></p>" : "") + "</section>";
+          return '<section class="blk"><h2>' + rich(s.noLabel === undefined ? "Задача " + s.no + ". " : s.noLabel) + rich(s.title) + "</h2>" + (s.given ? '<p class="small">Дано: ' + rich(s.given) + "</p>" : "") +
+            (s.paras || []).map(function (l) { return "<p>" + rich(l) + "</p>"; }).join("") +
+            s.lines.map(function (l) { return '<p class="calc">' + rich(l) + "</p>"; }).join("") +
+            (s.tables || []).map(function (tb) { return (tb.title ? '<p class="small"><b>' + rich(tb.title) + "</b></p>" : "") + '<div class="tscroll"><table class="data"><thead><tr>' + tb.headers.map(function (h) { return "<th>" + rich(h) + "</th>"; }).join("") + "</tr></thead><tbody>" +
+              tb.rows.map(function (rw) { if (rw && rw.span !== undefined) return '<tr><td class="l" colspan="' + tb.headers.length + '"><b>' + rich(rw.span) + "</b></td></tr>"; return "<tr>" + rw.map(function (v, i) { return "<td" + (i && !tb.wrap ? "" : ' class="l"') + ">" + (rw.bold ? "<b>" + rich(v) + "</b>" : rich(v)) + "</td>"; }).join("") + "</tr>"; }).join("") + "</tbody></table></div>"; }).join("") +
+            (s.after || []).map(function (l) { return "<p>" + rich(l) + "</p>"; }).join("") +
+            (s.answer ? "<p><b>" + rich(s.answerLabel || "Ответ") + ": " + rich(s.answer) + "</b></p>" : "") + "</section>";
         }).join("");
       canv = {};
       t.querySelectorAll("canvas[data-fig]").forEach(function (c) {
@@ -5749,6 +5752,244 @@ var LR1Engine = (function () {
       D.para([{ t: "9) ", bold: true }, "Схематическое изображение векторов Kн, Kк, Kлок и линий ортодромии и локсодромии"], { before: 6, after: 2, keep: true }); img("vec", 16);
       D.text(r.steps[9].paras[0]);
       D.para([{ t: "Ответ: ", bold: true }, "Sорт = " + f(o.S * 60, 1) + " мили; Kн = " + f(o.Kn, 1) + "°; Kк = " + f(o.Kk, 1) + "°; ΔK = γ = " + f(o.dK, 1) + "°; Kлок = " + f(o.Kl, 1) + "°; Sлок = " + f(o.Sl, 1) + " мили; ΔS = " + f(o.dS, 1) + " мили."], { before: 6 });
+    }
+  }));
+
+  /* ======================================================================
+     ЛР №5 «Обработка прямых равноточных измерений» — номер задачи из 9 цифр:
+     i-я цифра — номер строки в i-й колонке таблицы 5 (одинаково для всех трёх вариантов).
+     Точность — по методичке и учебнику (гл. 8): X̄, v и m_X̄ — на разряд точнее исходных данных,
+     m_x — с точностью исходных данных. Все суммы считаются в целых единицах младшего разряда (без ошибок округления).
+     ====================================================================== */
+  var T5 = {
+    1: [
+      ["54,21", "53,39", "52,22", "51,99", "53,52", "52,58", "54,48", "54,06", "53,33"],
+      ["53,46", null, "54,66", "52,32", "54,12", "53,35", null, "53,23", "52,29"],
+      ["52,18", "54,66", "52,89", null, "55,12", "54,41", "53,39", "55,05", "54,14"],
+      ["53,92", "52,38", "51,42", "55,01", "52,26", "55,01", "54,06", "54,63", "53,69"],
+      ["55,03", "53,26", "53,08", "54,68", "54,04", "53,83", "52,88", "52,92", "54,11"],
+      ["53,26", "52,44", "55,33", "53,49", null, "54,62", "53,44", "53,77", "53,33"],
+      [null, "55,36", "53,13", "52,44", "55,47", "52,29", "55,06", "54,28", "54,42"],
+      ["53,45", "54,49", "50,42", "53,38", "54,14", "53,13", "52,82", "55,13", null],
+      ["54,35", "55,03", "51,68", "54,01", "53,38", "54,14", "53,06", "53,36", "55,03"]],
+    2: [
+      ["357,5", "359,4", "0,6", "359,3", null, "1,1", "358,3", "1,6", "358,3"],
+      ["358,8", "1,3", "357,8", "359,6", "1,4", "0,4", "359,9", "0,5", "359,6"],
+      [null, "358,8", null, "357,4", "1,2", "358,2", "357,6", "358,2", null],
+      ["0,4", "359,1", "359", "3,6", "359,9", "359,6", "0,8", "357,9", "0,1"],
+      ["359,2", "0,3", "358,8", "359,7", "358,2", null, "1,1", "359,4", "359,2"],
+      ["359,6", "357,7", "0,4", "1,2", "0,6", "0,8", "1,9", "358,3", null],
+      ["1,2", "359,9", null, "3,4", "357,2", "358,3", "358,2", "357,7", "357,6"],
+      ["0,8", "357,6", "0,8", "358,3", "358,4", "1,7", null, "0,2", "358,2"],
+      ["358,6", "358,4", "1,4", "357,9", "0,2", "0,1", "359,4", "359,6", "1,1"]],
+    3: [
+      ["39°02,2′", "39°01,6′", "38°57,7′", "38°57,3′", "38°56,8′", "39°03,0′", "38°56,3′", "39°01,1′", "39°00,8′"],
+      [null, "38°57,3′", "39°01,6′", null, "39°01,3′", "39°01,4′", "39°02,4′", "39°02,7′", "38°57,7′"],
+      ["38°58,6′", "39°02,0′", "39°00,8′", "38°59,9′", "39°02,2′", "38°59,6′", "39°03,6′", "38°57,4′", "38°58,6′"],
+      ["38°57,4′", null, "38°57,3′", "39°02,2′", "38°57,3′", "38°58,1′", "38°57,7′", null, "38°59,4′"],
+      ["39°00,4′", "38°58,8′", "38°57,6′", "39°01,4′", "38°58,8′", "39°01,2′", "39°02,2′", "38°58,8′", "39°01,3′"],
+      ["38°58,9′", "38°59,2′", "39°00,3′", "39°01,0′", "38°57,4′", "39°02,4′", "38°55,4′", "39°00,7′", "39°00,6′"],
+      ["39°01,3′", "39°01,4′", "38°57,2′", "38°57,5′", null, "38°57,3′", "38°56,8′", "38°58,6′", "39°02,1′"],
+      ["39°02,4′", "39°00,7′", "39°01,1′", "38°57,5′", "39°02,7′", null, "39°00,4′", "38°59,4′", "38°57,4′"],
+      ["38°57,6′", "39°03,2′", "38°56,6′", "39°00,8′", "39°01,1′", "38°57,3′", "39°02,6′", "39°02,7′", "38°59,3′"]]
+  };
+  var K5 = {
+    1: { name: "Дистанция до ориентира", sym: "D", dec: 2, kind: "lin", unitW: "мили", head: "x = D, мили" },
+    2: { name: "Пеленг на ориентир", sym: "П", dec: 1, kind: "brg", unitW: "градусы", head: "x = П" },
+    3: { name: "Приведённая высота светила", sym: "h", dec: 1, kind: "hgt", unitW: "угловые минуты", head: "x = h" }
+  };
+  /* целое в единицах 10^-d → строка "−12,345" */
+  function fx(iv, d) { var s = iv < 0 ? "−" : "", a = Math.abs(iv), p = Math.pow(10, d), ip = Math.floor(a / p), fp = String(a - ip * p); while (fp.length < d) fp = "0" + fp; return s + ip + (d ? "," + fp : ""); }
+  function fxs(iv, d) { return (iv > 0 ? "+" : "") + fx(iv, d); }
+  /* минуты (целые в 10^-d) → 38°59,72′ */
+  function dmI(iv, d) { var p = Math.pow(10, d), a = Math.abs(iv), D = Math.floor(a / (60 * p)), r = a - D * 60 * p, s = fx(r, d); if (r < 10 * p) s = "0" + s; return (iv < 0 ? "−" : "") + D + "°" + s + "′"; }
+  function code5(d) { var c = String(d.code || "").replace(/\D/g, ""); if (c.length !== 9 || /0/.test(c)) return null; return c.split("").map(Number); }
+  function parse5(s, k) {
+    s = String(s).trim().replace(/[’'`]/g, "′").replace(/\s+/g, "");
+    if (k === 3) { var m = s.match(/^(\d+)°(\d+(?:[.,]\d+)?)′?$/); if (m) return Math.round((+m[1] * 60 + +m[2].replace(",", ".")) * 10); var mm = s.replace(",", ".").replace("′", ""); return isFinite(+mm) && mm !== "" ? Math.round(+mm * 10) : NaN; }
+    var v = +s.replace(",", "."); return isFinite(v) && s !== "" ? Math.round(v * Math.pow(10, K5[k].dec)) : NaN;
+  }
+  function own5(txt) { var t = String(txt || "").trim(); if (!t) return null; var a = t.split(/[\s;]+/).filter(Boolean); return a.length === 9 ? a.map(function (x) { return /^[-–—]$/.test(x) ? null : x; }) : "bad"; }
+  function series5(d, k, c) {
+    var K = K5[k], own = own5(d["m" + k]), ok = own && own !== "bad", items = [];
+    for (var j = 0; j < 9; j++) {
+      var raw = ok ? own[j] : T5[k][c[j] - 1][j];
+      items.push({ col: j + 1, row: ok ? "—" : c[j], raw: raw, iv: raw === null ? null : parse5(raw, k) });
+    }
+    return { K: K, k: k, items: items, own: ok, ownBad: own === "bad" };
+  }
+  function calc5(S) {
+    var K = S.K, d = S.K.dec, it = S.items.filter(function (x) { return x.iv !== null && isFinite(x.iv); }), n = it.length;
+    if (n < 2) return null;
+    var full = 360 * Math.pow(10, d), shift = false;
+    if (K.kind === "brg") {          /* зона 360°: 357° и 1° → 357° и 361° */
+      var lo = Math.min.apply(null, it.map(function (x) { return x.iv; })), hi = Math.max.apply(null, it.map(function (x) { return x.iv; }));
+      if (hi - lo > full / 2) { shift = true; it.forEach(function (x) { x.w = x.iv < full / 2 ? x.iv + full : x.iv; }); } else it.forEach(function (x) { x.w = x.iv; });
+    } else it.forEach(function (x) { x.w = x.iv; });
+    var Sx = 0; it.forEach(function (x) { Sx += x.w; });
+    var Xb = Math.round(Sx * 10 / n), Sv = 0, Sv2 = 0, vmax = 0;          /* X̄ — в единицах 10^-(d+1) */
+    it.forEach(function (x) { x.v = x.w * 10 - Xb; x.v2 = x.v * x.v; Sv += x.v; Sv2 += x.v2; vmax = Math.max(vmax, Math.abs(x.v)); });
+    var mn = Math.min.apply(null, it.map(function (x) { return x.w; })), mxv = Math.max.apply(null, it.map(function (x) { return x.w; }));
+    var q = Sv2 / Math.pow(10, 2 * d + 2) / (n - 1), mxE = Math.sqrt(q), mx4 = Math.round(mxE * Math.pow(10, d + 2)) / Math.pow(10, d + 2);
+    var sn = Math.sqrt(n), mXE = mx4 / sn, mX4 = Math.round(mXE * Math.pow(10, d + 2)) / Math.pow(10, d + 2);
+    var mxR = Math.round(mx4 * Math.pow(10, d)), mXR = Math.round(mX4 * Math.pow(10, d + 1));     /* итоговые (целые) */
+    var XbN = K.kind === "brg" && Xb >= full * 10 ? Xb - full * 10 : Xb;
+    return { n: n, it: it, Sx: Sx, Xb: Xb, XbN: XbN, Sv: Sv, Sv2: Sv2, q: q, mxE: mxE, mx4: mx4, sn: sn, mX4: mX4, mxR: mxR, mXR: mXR, mn: mn, mx: mxv, shift: shift, vmax: vmax, d: d, full: full };
+  }
+  function L5(S, R) {
+    var K = S.K, d = K.dec, k = S.k, sym = K.sym, L = {};
+    /* значения в нужной форме */
+    function V(iv, dd) { return K.kind === "lin" ? fx(iv, dd) + " мили" : K.kind === "brg" ? fx(iv, dd) + "°" : fx(iv, dd) + "′"; }   // в рабочих единицах
+    function Vn(iv, dd) {                                              // в форме исходных данных
+      if (K.kind === "hgt") return dmI(iv, dd);
+      if (K.kind === "brg") { var fu = R.full * Math.pow(10, dd - d); return fx(iv >= fu ? iv - fu : iv, dd) + "°"; }
+      return fx(iv, dd) + " мили";
+    }
+    function Uw(s) { return K.kind === "lin" ? s + " мили" : K.kind === "brg" ? s + "°" : s + "′"; }
+    L.V = V; L.Vn = Vn; L.Uw = Uw;
+    L.int = Vn(R.mn, d) + " … " + Vn(R.mx, d) + (K.kind === "hgt" ? " (" + V(R.mn, d) + " … " + V(R.mx, d) + ")" : K.kind === "brg" && R.shift ? " (в рабочей ветви " + V(R.mn, d) + " … " + V(R.mx, d) + ")" : "");
+    L.p1 = ["Рабочий интервал (от наименьшего до наибольшего результата): " + L.int,
+      "Количество учитываемых измерений: n = " + R.n + (R.n < 9 ? " (прочерков в выборке: " + (9 - R.n) + " — они в обработку не входят)" : "")];
+    if (K.kind === "brg") L.p1.push(R.shift ? "Пеленги лежат по обе стороны от 0° (360°). Так как 0° и 360° — одно направление, значения меньше 180° увеличены на 360° (например, 0,4° → 360,4°), после чего серия обрабатывается обычным порядком." : "Пеленги не переходят через 0° (360°), приведение к одной ветви не требуется.");
+    if (K.kind === "hgt") L.p1.push("Высоты выражены в градусах и минутах, поэтому перед обработкой они переведены в угловые минуты: h′ = 60·h° + h′ (например, " + S.items.filter(function (x) { return x.iv !== null; })[0].raw + " = " + V(S.items.filter(function (x) { return x.iv !== null; })[0].iv, d) + ").");
+    L.p2 = ["X̄ = Σx / n", "Σx = " + V(R.Sx, d), "X̄ = " + fx(R.Sx, d) + " / " + R.n + " = " + fx(R.Xb, d + 1) + (K.kind === "lin" ? " мили" : K.kind === "brg" ? "°" : "′") + "  (округлено на разряд точнее исходных данных)"];
+    if (K.kind === "brg" && R.Xb !== R.XbN) L.p2.push("X̄ = " + fx(R.Xb, d + 1) + "° − 360° = " + fx(R.XbN, d + 1) + "°");
+    if (K.kind === "hgt") L.p2.push("X̄ = " + fx(R.Xb, d + 1) + "′ = " + dmI(R.Xb, d + 1));
+    L.ctrl1 = "Проверка: X̄ лежит в рабочем интервале — " + V(R.mn, d) + " < " + V(R.Xb, d + 1) + " < " + V(R.mx, d) + " ✓";
+    L.X = sym + " = " + Vn(K.kind === "brg" ? R.XbN : R.Xb, d + 1);
+    L.p4 = ["m_{x} = ± √( Σv² / (n − 1) )",
+      "m_{x} = ± √( " + fx(R.Sv2, 2 * d + 2) + " / (" + R.n + " − 1) ) = ± √( " + fx(R.Sv2, 2 * d + 2) + " / " + (R.n - 1) + " ) = ± √" + f(R.q, 2 * d + 2) + " = ± " + f(R.mx4, d + 2) + " ≈ ± " + Uw(fx(R.mxR, d))];
+    L.p5 = ["m_{X̄} = m_{x} / √n", "m_{X̄} = ± " + f(R.mx4, d + 2) + " / √" + R.n + " = ± " + f(R.mx4, d + 2) + " / " + f(R.sn, 4) + " = ± " + f(R.mX4, d + 2) + " ≈ ± " + Uw(fx(R.mXR, d + 1))];
+    var Xs = Vn(K.kind === "brg" ? R.XbN : R.Xb, d + 1);
+    var mXs = K.kind === "hgt" ? fx(R.mXR, d + 1) + "′" : Uw(fx(R.mXR, d + 1)), mX2 = K.kind === "hgt" ? fx(2 * R.mXR, d + 1) + "′" : Uw(fx(2 * R.mXR, d + 1));
+    var mxs = K.kind === "hgt" ? fx(R.mxR, d) + "′" : Uw(fx(R.mxR, d)), mx2 = K.kind === "hgt" ? fx(2 * R.mxR, d) + "′" : Uw(fx(2 * R.mxR, d));
+    var Xr = K.kind === "lin" ? Xs.replace(" мили", "") : Xs, mXr = K.kind === "lin" ? mXs.replace(" мили", "") : mXs, mX2r = K.kind === "lin" ? mX2.replace(" мили", "") : mX2, un = K.kind === "lin" ? " мили" : "";
+    L.res = [sym + " = " + Xr + " ± " + mXr + un + "   (P = 68,3 %)", sym + " = " + Xr + " ± " + mX2r + un + "   (P = 95,4 %, удвоенный интервал)"];
+    L.single = "Любое единичное измерение этой серии: x ± " + mxs + " (P = 68,3 %), x ± " + mx2 + " (P = 95,4 %).";
+    var sv = R.Sv === 0 ? "Σv = 0 ✓" : "Σv = " + fx(R.Sv, d + 1) + " ≈ 0 ✓ (отличие от нуля = Σx − n·X̄ — следствие округления X̄)";
+    var v3 = 3 * R.mx4, vm = R.vmax / Math.pow(10, d + 1);
+    L.ctrl = ["Контроль по методу наименьших квадратов: " + sv,
+      "Контроль на промахи (правило 3m_{x}): |v|max = " + fx(R.vmax, d + 1) + " " + (vm < v3 ? "<" : "≥") + " 3m_{x} = " + f(v3, d + 1) + (vm < v3 ? " — грубых промахов в серии нет." : " — результат с наибольшим уклонением подозрителен на промах (по методичке в обработке оставлен).")];
+    L.ans = { X: Xs, mx: mxs, mX: mXs, n: R.n, Sx: V(R.Sx, d), Sv2: fx(R.Sv2, 2 * d + 2), int: L.int };
+    var nu = function (t) { return String(t).replace(/ мили/g, ""); };
+    L.sum = [k + " — " + sym, K.kind === "lin" ? "мили" : K.kind === "brg" ? "градусы" : "° ′", nu(Vn(R.mn, d)) + " … " + nu(Vn(R.mx, d)), String(R.n), nu(V(R.Sx, d)), nu(Xs), fx(R.Sv2, 2 * d + 2), "± " + nu(mxs), "± " + nu(mXs)];
+    /* таблица уклонений */
+    var hd = K.kind === "lin" ? ["Колонка", "Строка", K.head, "v = x − X̄", "v²"] : K.kind === "brg" ? ["Колонка", "Строка", "x = П", "x рабочее", "v = x − X̄", "v²"] : ["Колонка", "Строка", "x = h", "x, ′", "v = x − X̄, ′", "v²"];
+    var rows = S.items.map(function (x) {
+      if (x.iv === null) return [String(x.col), String(x.row), "—", ""].concat(K.kind === "lin" ? [""] : ["", ""]);
+      var raw = K.kind === "lin" ? fx(x.iv, d) : K.kind === "brg" ? fx(x.iv, d) + "°" : dmI(x.iv, d);
+      var r = [String(x.col), String(x.row), raw];
+      if (K.kind !== "lin") r.push(K.kind === "brg" ? fx(x.w, d) + "°" : fx(x.w, d));
+      return r.concat([fxs(x.v, d + 1), fx(x.v2, 2 * d + 2)]);
+    });
+    var tot = ["Σ", "n = " + R.n, K.kind === "lin" ? fx(R.Sx, d) : ""];
+    if (K.kind !== "lin") tot.push(K.kind === "brg" ? fx(R.Sx, d) + "°" : fx(R.Sx, d));
+    tot = tot.concat(["Σv = " + fx(R.Sv, d + 1), fx(R.Sv2, 2 * d + 2)]); tot.bold = true; rows.push(tot);
+    L.tbl = { headers: hd, rows: rows, widths: K.kind === "lin" ? [2.2, 2, 3.6, 3.6, 3.6] : [2, 1.8, 3, 3, 3.2, 3] };
+    L.sel = { headers: ["Колонка"].concat(S.items.map(function (x) { return "(" + x.col + ")"; })), rows: [["Строка"].concat(S.items.map(function (x) { return String(x.row); })),
+      [sym].concat(S.items.map(function (x) { return x.raw === null ? "—" : K.kind === "hgt" ? dmI(x.iv, d) : fx(x.iv, d); }))] };
+    return L;
+  }
+  /* график рассеяния результатов серии: X̄, полоса ± m_X̄, линии ± m_x и ± 2m_x */
+  function fig5(k) {
+    return { caption: "Рассеяние результатов серии " + K5[k].sym + " относительно X̄ (вариант " + k + ")", draw: function (cv, LK, d, r) {
+      var V = r.V[k], R = V.R, K = V.S.K, dd = K.dec, W = 1300, H = 560, c = cvInit(cv, W, H);
+      var sc = Math.pow(10, dd + 1), X = R.Xb / sc, m = R.mx4, mX = R.mX4, pts = R.it.map(function (x) { return [x.col, x.w / Math.pow(10, dd)]; });
+      var ys = pts.map(function (p) { return p[1]; }).concat([X - 2 * m, X + 2 * m]), y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys), pad = (y1 - y0) * 0.08; y0 -= pad; y1 += pad;
+      var L0 = 150, R0 = W - 250, T0 = 40, B0 = H - 80;
+      function PX(i) { return L0 + (i - 0.5) / 9 * (R0 - L0); } function PY(y) { return B0 - (y - y0) / (y1 - y0) * (B0 - T0); }
+      /* сетка и шкала */
+      var span = y1 - y0, st = [0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 5, 10].filter(function (s) { return span / s <= 9; })[0] || 10;
+      for (var y = Math.ceil(y0 / st) * st; y <= y1 + 1e-9; y += st) {
+        ln(c, [[L0, PY(y)], [R0, PY(y)]], 1, "#d4d4d4");
+        var lab = K.kind === "hgt" ? dmI(Math.round(y * 100), 2).replace(/,?0+′$/, "′").replace(/,′$/, "′") : K.kind === "brg" ? f(((y % 360) + 360) % 360, st < 0.1 ? 2 : 1) + "°" : f(y, st < 0.1 ? 2 : 1);
+        tx(c, lab, L0 - 12, PY(y), { size: 22, align: "right", color: "#444" });
+      }
+      ln(c, [[L0, T0], [L0, B0], [R0, B0]], 2, "#111");
+      for (var i = 1; i <= 9; i++) { ln(c, [[PX(i), B0], [PX(i), B0 + 8]], 2, "#111"); tx(c, "(" + i + ")", PX(i), B0 + 30, { size: 22 }); }
+      tx(c, "номер колонки (измерения)", (L0 + R0) / 2, B0 + 62, { size: 22, color: "#444" });
+      /* полоса ± m_X̄ и линии */
+      c.fillStyle = "rgba(0,0,0,0.12)"; c.fillRect(L0 + 1, PY(X + mX), R0 - L0 - 1, PY(X - mX) - PY(X + mX));
+      ln(c, [[L0, PY(X + m)], [R0, PY(X + m)]], 2, "#111", [12, 8]); ln(c, [[L0, PY(X - m)], [R0, PY(X - m)]], 2, "#111", [12, 8]);
+      ln(c, [[L0, PY(X + 2 * m)], [R0, PY(X + 2 * m)]], 1.5, "#666", [3, 6]); ln(c, [[L0, PY(X - 2 * m)], [R0, PY(X - 2 * m)]], 1.5, "#666", [3, 6]);
+      ln(c, [[L0, PY(X)], [R0, PY(X)]], 3, "#111");
+      /* уклонения v и точки */
+      pts.forEach(function (p) { ln(c, [[PX(p[0]), PY(X)], [PX(p[0]), PY(p[1])]], 1.4, "#555"); dot(c, PX(p[0]), PY(p[1]), 8); });
+      R.it.length < 9 && V.S.items.forEach(function (x) { if (x.iv === null) tx(c, "прочерк", PX(x.col), T0 + 18, { size: 20, italic: true, color: "#666" }); });
+      var xr = R0 + 16;
+      tx(c, "X̄", xr, PY(X), { size: 26, italic: true, bold: true, align: "left" });
+      tx(c, "X̄ ± m_{X̄}", xr, PY(X + mX) - 20 < PY(X) - 34 ? PY(X + mX) - 2 : PY(X) - 34, { size: 22, italic: true, align: "left", color: "#444" });
+      tx(c, "+m_{x}", xr, PY(X + m), { size: 23, italic: true, align: "left" }); tx(c, "−m_{x}", xr, PY(X - m), { size: 23, italic: true, align: "left" });
+      tx(c, "+2m_{x}", xr, PY(X + 2 * m), { size: 21, italic: true, align: "left", color: "#555" }); tx(c, "−2m_{x}", xr, PY(X - 2 * m), { size: 21, italic: true, align: "left", color: "#555" });
+      tx(c, K.sym + (K.kind === "lin" ? ", мили" : ""), L0, T0 - 20, { size: 24, italic: true });
+    } };
+  }
+  App.taskWork(Object.assign({}, base, {
+    id: "mos-lr5", order: 5, key: "mos-lr5", file: "МОС_ЛР5_Равноточные_измерения", no: "ЛР 5", short: "ЛР №5",
+    eyebrow: "МОС · Лабораторная работа №5", title: "Обработка прямых равноточных измерений", titleTopic: "Обработка прямых равноточных измерений",
+    desc: "Номер задачи из 9 цифр (например 248745654): каждая цифра — строка в своей колонке таблицы 5. Все три варианта (D, П, h): рабочий интервал, Σx, X̄, Σv², mx, mX̄, контроль, сводная таблица, графики рассеяния.",
+    variants: 1, summary: false, varText: function (d) { var c = code5(d); return "Задача № " + (c ? c.join("") : "—"); },
+    variantData: function () { return { variant: "1", code: "412412412", which: "123", m1: "", m2: "", m3: "" }; },
+    hint: "9 цифр номера задачи — номера строк таблицы 5 по колонкам (1)…(9), одинаковые для вариантов 1–3. Прочерк в таблице — нет результата, такое измерение не учитывается в n. Свои значения можно вписать вместо табличных (9 штук через пробел, «-» — прочерк).",
+    sections: [{ title: "Номер задачи", fields: [["code", "Номер задачи (9 цифр)"], ["which", "Что решать", { select: [["123", "все три варианта (D, П, h)"], ["1", "только вариант 1 — дистанция D"], ["2", "только вариант 2 — пеленг П"], ["3", "только вариант 3 — высота h"]] }]] },
+      { title: "Свои значения (необязательно)", note: "Пусто — значения берутся из таблицы 5 по номеру задачи.", fields: [["m1", "D, мили — 9 значений", { wide: true, ph: "например: 53,92 53,39 54,66 55,01 53,52 53,35 54,06 54,06 52,29" }],
+        ["m2", "П, ° — 9 значений", { wide: true, ph: "например: 0,4 359,4 357,8 3,6 - 0,4 0,8 1,6 359,6" }], ["m3", "h — 9 значений", { wide: true, ph: "например: 38°57,4' 39°01,6' … (или в минутах: 2337,4 …)" }]] }],
+    figs: { v1: fig5(1), v2: fig5(2), v3: fig5(3) },
+    solve: function (d) {
+      var c = code5(d), st = [], warn = [];
+      if (!c) return { steps: [], warn: ["Введите номер задачи из 9 цифр от 1 до 9 (например 412412412)."] };
+      var ks = String(d.which || "123").split("").map(Number).filter(function (k) { return K5[k]; }), V = {}, no = 1;
+      ks.forEach(function (k) {
+        var S = series5(d, k, c), K = S.K;
+        if (S.ownBad) warn.push("Вариант " + k + ": в поле своих значений должно быть ровно 9 значений — взяты значения из таблицы.");
+        if (S.items.some(function (x) { return x.raw !== null && !isFinite(x.iv); })) { warn.push("Вариант " + k + ": не удалось прочитать одно из значений."); return; }
+        var R = calc5(S); if (!R) { warn.push("Вариант " + k + ": меньше двух результатов — обработка невозможна."); return; }
+        var L = L5(S, R); V[k] = { S: S, R: R, L: L };
+        var T = "Вариант " + k + " (" + K.sym + "). ";
+        st.push({ no: no++, noLabel: "", title: "Вариант " + k + ". " + K.name + " " + K.sym + (K.kind === "lin" ? ", мили" : K.kind === "brg" ? ", градусы" : "") + " — выборка по номеру " + c.join(""), lines: [], tables: [L.sel] });
+        st.push({ no: no++, noLabel: "1) ", title: T + "Рабочий интервал и количество измерений", lines: L.p1, answer: "n = " + R.n + "; " + L.int });
+        st.push({ no: no++, noLabel: "2) ", title: T + "Среднее арифметическое (вероятнейшее) значение", lines: L.p2.concat([L.ctrl1]), answer: "X̄ = " + L.ans.X });
+        st.push({ no: no++, noLabel: "3) ", title: T + "Таблица уклонений v = x − X̄ и их квадратов", lines: [], tables: [L.tbl], answer: "Σv² = " + L.ans.Sv2 });
+        st.push({ no: no++, noLabel: "4) ", title: T + "СКП единичного измерения (формула Бесселя)", lines: L.p4, answer: "m_{x} = ± " + L.ans.mx });
+        st.push({ no: no++, noLabel: "5) ", title: T + "СКП среднего арифметического", lines: L.p5, answer: "m_{X̄} = ± " + L.ans.mX });
+        st.push({ no: no++, noLabel: "6) ", title: T + "Результат и контроль", lines: L.res.concat([L.single]).concat(L.ctrl), figs: ["v" + k], answer: L.res[0].replace(/\s+\(P.*$/, "") + " (P = 68,3 %)" });
+      });
+      var kk = Object.keys(V);
+      if (kk.length) st.push({ no: no++, noLabel: "", title: "Сводка по вариантам (что требуется выписать по методичке)", lines: [], tables: [{ headers: ["Вариант", "Единицы", "Рабочий интервал", "n", "Σx", "X̄", "Σv²", "m_{x}", "m_{X̄}"],
+        rows: kk.map(function (k) { return V[k].L.sum; }) }] });
+      return { steps: st, warn: warn, V: V, c: c };
+    },
+    report: function (D, d, r, img) {
+      if (!r.V || !Object.keys(r.V).length) { D.text("Номер задачи не задан."); return; }
+      var IL = function (t) { italicLine(D, t, 0.8); };
+      if (D.hasTitle) D.para("Решение задачи № " + r.c.join(""), { bold: true, align: "center", size: 14, after: 6 });
+      D.text("Цель работы: по серии прямых равноточных измерений навигационного параметра найти вероятнейшее (среднее арифметическое) значение, среднюю квадратическую погрешность (СКП) единичного измерения по формуле Бесселя и СКП среднего арифметического.");
+      D.para("Рабочие формулы:", { before: 4, after: 2 });
+      IL("X̄ = Σx / n;   v = x − X̄;   m_{x} = ± √( Σv² / (n − 1) );   m_{X̄} = m_{x} / √n.");
+      IL("X̄ и m_{X̄} — на разряд точнее исходных данных, m_{x} — с точностью исходных данных; промежуточные вычисления — на 1–2 знака точнее.");
+      var first = true;
+      Object.keys(r.V).forEach(function (k) {
+        var V = r.V[k], L = V.L, K = V.S.K;
+        if (!first) D.pageBreak();
+        D.head("Вариант " + k + ". " + K.name + " " + K.sym + (K.kind === "lin" ? ", мили" : K.kind === "brg" ? ", градусы" : ""), { size: 13, before: first ? 10 : 14, after: 4 }); first = false;
+        D.para("Выборка по номеру задачи " + r.c.join("") + (V.S.own ? " (значения введены вручную)" : "") + ":", { after: 2, keep: true });
+        D.table(L.sel.headers, L.sel.rows, { widths: [2].concat(Array(9).fill(K.kind === "hgt" ? 1.65 : 1.5)), size: K.kind === "hgt" ? 9 : 10 });
+        D.para([{ t: "1) ", bold: true }, "Рабочий интервал и количество измерений"], { before: 4, after: 1, keep: true }); L.p1.forEach(IL);
+        D.para([{ t: "2) ", bold: true }, "Среднее арифметическое (вероятнейшее) значение"], { before: 6, after: 1, keep: true }); L.p2.forEach(IL); IL(L.ctrl1);
+        D.para([{ t: "3) ", bold: true }, "Таблица уклонений"], { before: 6, after: 2, keep: true });
+        D.table(L.tbl.headers, L.tbl.rows, { widths: L.tbl.widths, size: 10.5 });
+        D.para([{ t: "4) ", bold: true }, "СКП единичного измерения по формуле Бесселя"], { before: 4, after: 1, keep: true }); L.p4.forEach(IL);
+        D.para([{ t: "5) ", bold: true }, "СКП среднего арифметического"], { before: 6, after: 1, keep: true }); L.p5.forEach(IL);
+        D.para([{ t: "6) ", bold: true }, "Результат обработки серии и контроль"], { before: 6, after: 1, keep: true });
+        L.res.forEach(function (t) { D.para(t, { bold: true, left: 0.8, after: 1 }); });
+        D.text(L.single); L.ctrl.forEach(IL);
+        D.para("Рассеяние результатов относительно X̄ (сплошная — X̄, серая полоса — X̄ ± m_{X̄}, штрихи — ± m_{x}, точки — ± 2m_{x}):", { before: 4, after: 2, size: 11, keep: true });
+        img("v" + k, 15.5);
+      });
+      var sm = r.steps[r.steps.length - 1];
+      D.para([{ t: "Итоги по вариантам ", bold: true }, "(рабочий интервал, Σx, X̄, Σv², m_{x}, m_{X̄})"], { before: 10, after: 2, keep: true });
+      D.table(sm.tables[0].headers, sm.tables[0].rows, { widths: [1.5, 1.9, 3.3, 0.7, 1.8, 2.1, 1.7, 1.3, 1.4], size: 9.5 });
+      D.para([{ t: "Ответ: ", bold: true }, Object.keys(r.V).map(function (k) { return r.V[k].L.res[0].replace(/\s+\(P.*$/, ""); }).join("; ") + " (P = 68,3 %)."], { before: 6 });
     }
   }));
 })();
