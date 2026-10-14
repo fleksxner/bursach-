@@ -8148,7 +8148,7 @@ var TUS = (function () {
     th: [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90],
     dw: [6600, 7600, 8600, 9600, 10600, 11600, 12600, 13600, 14600],
     C: [
-      [0, .09, .177, .30, .473, .699, .905, 1.058, 1.193, 1.277, 1.308, 1.299, 1.263, 1.19, 1.1, 1, .9, .81, .72],
+      [0, .09, .177, .30, .473, .672, .905, 1.058, 1.193, 1.277, 1.308, 1.299, 1.263, 1.19, 1.1, 1, .9, .81, .72],
       [0, .09, .177, .30, .467, .661, .856, 1.020, 1.163, 1.255, 1.294, 1.290, 1.26, 1.185, 1.095, .995, .89, .8, .71],
       [0, .09, .177, .30, .460, .619, .807, .965, 1.113, 1.208, 1.253, 1.256, 1.23, 1.17, 1.08, .985, .88, .79, .7],
       [0, .09, .177, .30, .448, .598, .768, .917, 1.043, 1.145, 1.194, 1.201, 1.179, 1.132, 1.03, .94, .84, .75, .66],
@@ -8467,6 +8467,390 @@ var TUS = (function () {
       dsoA: { caption: "ДСО неаварийного (l0) и аварийного (la) судна, плечи кренящего момента δlг, δlв, δl; заштрихована площадь S40", draw: function (cvs, pl, d, r) { drawA(cvs, r.c); } },
       dsoa: { caption: "ДСО аварийного судна со сместившимся грузом по la (заштрихована площадь S40 от θA до 40°)", draw: function (cvs, pl, d, r) { drawLa(cvs, r.c, null); } },
       dsoS: { caption: "ДСО аварийного судна до и после спрямления", draw: function (cvs, pl, d, r) { drawLa(cvs, r.c, r.c.st); } } },
+    summary: false });
+  TUS.uni4 = { UNI: UNI, pchip: pchip, DP: DP };
+})();
+
+/* ===== ТУС · 4 курс · ПР №2. Восстановление мореходных качеств аварийного судна с отрицательной начальной остойчивостью (т/х «Новгород») ===== */
+(function () {
+  "use strict";
+  var U4 = TUS.uni4, num = TUS.num, G = TUS.G, RAD = Math.PI / 180, R = 57.3;
+  var cv = G.cv, txt = G.txt, line = G.line, arrow = G.arrow, dot = G.dot, axes = G.axes, pchip = U4.pchip, UNIB = U4.UNI, DP = U4.DP;
+  function f(x, n) { return App.f(x, n === undefined ? 1 : n).replace(/^-/, "−"); }
+  function par(x, d) { return x < 0 ? "(" + f(x, d) + ")" : f(x, d); }
+  var sin = function (a) { return Math.sin(a * RAD); }, cos = function (a) { return Math.cos(a * RAD); };
+
+  /* Универсальная ДСО т/х «Новгород», рис. 4.4, а [1] (DW = 600…6600 т): C(θ) — ордината кривой DW над осью углов, м (h = 1 − C по шкале h).
+     Оцифровано по файлу «Универсальная ДСО» (шкала углов — sin θ; выше h = 0 масштаб сверен с кривой DW = 6600 т панели б).
+     При θ ≥ 80° кривые на рисунке почти вертикальны и сливаются — значения приближённые; кривая 600 т ниже рамки (θ > 69°) продолжена плавно. */
+  var UNIA = {
+    th: [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90],
+    dw: [600, 1600, 2600, 3600, 4600, 5600, 6600],
+    C: [
+      [0, .09, .177, .30, .386, .409, .371, .283, .165, .033, -.109, -.263, -.431, -.618, -.832, -1.03, -1.19, -1.29, -1.33],
+      [0, .09, .177, .30, .434, .529, .591, .598, .566, .514, .446, .353, .222, .034, -.233, -.449, -.63, -.74, -.78],
+      [0, .09, .177, .30, .464, .594, .748, .833, .873, .872, .836, .768, .673, .544, .371, .145, -.17, -.38, -.44],
+      [0, .09, .177, .30, .465, .628, .826, .977, 1.059, 1.088, 1.079, 1.043, .975, .862, .70, .52, .32, .08, 0],
+      [0, .09, .177, .30, .466, .642, .856, 1.032, 1.143, 1.20, 1.213, 1.19, 1.134, 1.041, .909, .745, .57, .36, .27],
+      [0, .09, .177, .30, .467, .65, .877, 1.05, 1.173, 1.247, 1.277, 1.268, 1.223, 1.145, 1.037, .902, .75, .55, .47],
+      [0, .09, .177, .30, .468, .656, .875, 1.058, 1.189, 1.27, 1.307, 1.305, 1.268, 1.199, 1.104, .995, .84, .66, .61]]
+  };
+  /* табл. 3.1 [1]: DW, т → осадка средняя dср, м и число тонн на 1 см осадки q, т/см (ρ = 1,025 т/м³) */
+  var T31 = { dw: [0, 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 5500, 6000, 6500, 7000, 7500, 8000, 8500, 9000, 9500, 10000, 10500, 11000, 11500, 12000, 12500, 13000, 13500, 14000],
+    d: [3.13, 3.39, 3.64, 3.89, 4.14, 4.38, 4.63, 4.88, 5.12, 5.36, 5.60, 5.84, 6.07, 6.31, 6.54, 6.77, 7.00, 7.24, 7.46, 7.69, 7.91, 8.13, 8.35, 8.57, 8.79, 9.00, 9.28, 9.43, 9.65],
+    q: [19.6, 19.7, 19.9, 20.0, 20.2, 20.3, 20.4, 20.5, 20.7, 20.8, 21.0, 21.1, 21.3, 21.4, 21.5, 21.7, 21.8, 22.0, 22.1, 22.3, 22.4, 22.6, 22.7, 22.9, 23.0, 23.1, 23.2, 23.4, 23.6] };
+  /* балластные танки: табл. 3, 5 методички и прилож. 7 [1]; y снята со схемы танков (стр. 225 [1]) — правый борт «+» */
+  var TANKS0 = "Форпик ДП; 208,5; 7,11; 0; 0,17; 0\nТанк № 1 ДП; 367,6; 1,85; 0; 0,04; 855\nТанк № 2 Пр. Б; 74,3; 0,74; 3,4; 0,08; 239\nТанк № 2 ЛБ; 92,0; 0,72; −3,4; 0,06; 295\n" +
+    "Танк № 3 Пр. Б; 86,6; 0,70; 4,2; 0,06; 445\nТанк № 3 ЛБ; 75,2; 0,70; −4,2; 0,08; 297\nТанк № 4 Пр. Б; 127,2; 0,72; 7,2; 0,05; 237\nТанк № 4 ЛБ; 127,2; 0,72; −7,2; 0,05; 237\n" +
+    "Танк № 5 Пр. Б; 122,1; 0,73; 7,2; 0,05; 213\nТанк № 5 ЛБ; 122,1; 0,73; −7,2; 0,05; 213\nТанк № 10 Пр. Б; 91,5; 2,04; 2,6; 0,25; 0\nТанк № 10 ЛБ; 104,7; 2,19; −3,4; 0,23; 0\n" +
+    "Ахтерпик ДП; 130,7; 8,09; 0; 0,28; 0\nДиптанк № 1 Пр. Б; 249,7; 6,23; 6,8; 0,27; 36\nДиптанк № 1 ЛБ; 238,0; 6,23; −6,8; 0,27; 34";
+  var THT = [5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90];
+
+  /* формулы вариантов (с доски; коэффициенты меняются во вводных) */
+  var FD = { fD1a: "2700", fD1b: "400", fD2a: "6600", fD2b: "−200", fH1a: "−0,40", fH1b: "−0,03", fH2a: "−0,80", fH2b: "0,04", fH3a: "−0,30", fH3b: "−0,01" };
+  function nm(v) { return num(String(v == null ? "" : v).replace("−", "-"), NaN); }
+  function frm(d) { var g = function (k) { var v = nm(d[k]); return isFinite(v) ? v : nm(FD[k]); }; return { D1: [g("fD1a"), g("fD1b")], D2: [g("fD2a"), g("fD2b")], H1: [g("fH1a"), g("fH1b")], H2: [g("fH2a"), g("fH2b")], H3: [g("fH3a"), g("fH3b")] }; }
+  function ftxt(nmv, k, N, v, dec, unit, ad) { var a = f(k[0], ad || 0), b = Math.abs(k[1]), bs = String(b).replace(".", ","), op = k[1] < 0 ? " − " : " + "; return nmv + " = " + a + op + bs + "·N = " + a + op + bs + "·" + N + " = " + f(v, dec) + unit; }
+
+  function lerp(xs, ys, x) { var i = 0; if (x <= xs[0]) i = 0; else if (x >= xs[xs.length - 1]) i = xs.length - 2; else while (x > xs[i + 1]) i++; var k = (x - xs[i]) / (xs[i + 1] - xs[i]); return { v: ys[i] + k * (ys[i + 1] - ys[i]), i: i, k: k }; }
+  /* кривая универсальной ДСО для DW: панель а (DW < 6600) или б (DW ≥ 6600), линейная интерполяция между соседними кривыми */
+  function uniC(DW) {
+    var P = DW < 6600 ? UNIA : UNIB, L = P.dw, cl = Math.min(Math.max(DW, L[0]), L[L.length - 1]), i = 0;
+    while (i < L.length - 2 && cl > L[i + 1]) i++;
+    var k = (cl - L[i]) / (L[i + 1] - L[i]), C = P.C[i].map(function (c, j) { return c + k * (P.C[i + 1][j] - c); });
+    return { panel: P === UNIA ? "а" : "б", P: P, lo: L[i], hi: L[i + 1], k: k, C: C, fn: pchip(P.th, C), clamped: cl !== DW };
+  }
+  /* ДСО на два борта: l(−θ) = −l(θ) */
+  function dso(DW, h, man) {
+    var U = uniC(DW), l1;
+    if (man) { var th = [0].concat(THT), lv = [0].concat(man); l1 = pchip(th, lv); }
+    else l1 = function (a) { return U.fn(a) - (1 - h) * sin(a); };
+    var l = function (a) { return a >= 0 ? l1(Math.min(a, 90)) : -l1(Math.min(-a, 90)); };
+    return { U: U, l: l };
+  }
+  function zero(fn, a0, a1, up) { var st = 0.02; for (var a = a0; a < a1 - 1e-9; a += st) { var u = fn(a), v = fn(a + st); if (up ? (u < 0 && v >= 0) : (u > 0 && v <= 0)) return a + st * u / (u - v); } return null; }
+  function integ(fn, a, b) { var n = Math.max(2, Math.ceil(Math.abs(b - a) / 0.05)), hst = (b - a) / n, s = 0; for (var i = 0; i < n; i++) s += (fn(a + i * hst) + fn(a + (i + 1) * hst)) / 2 * hst; return s / R; }
+  function params(l, h) {
+    var thA = 0, A = null;
+    if (h < 0) { thA = zero(l, 0.02, 90, true); }
+    var thV = zero(l, (thA || 0) + 0.02, 90, false), end = thV === null ? 90 : thV, mx = { a: thA || 0, l: -1e9 };
+    for (var a = (thA || 0); a <= end + 1e-9; a += 0.05) { var v = l(a); if (v > mx.l) mx = { a: a, l: v }; }
+    if (thA !== null && thA > 0) { A = { a: 0, l: 1e9 }; for (a = 0.05; a < thA; a += 0.05) { v = l(a); if (v < A.l) A = { a: a, l: v }; } }
+    var S = thA === null ? 0 : integ(function (x) { return Math.max(0, l(x)); }, thA, end);
+    return { thA: thA, thV: thV, end: end, max: mx, A: A, S: S };
+  }
+  /* динамический наклон на противоположный борт под действием постоянного кренящего плеча lkr (к ЛБ) из точки A */
+  function dynamic(l, P, lkr) {
+    /* от точки A в сторону ЛБ: S1 — площадь, где l + lкр > 0 (диаграмма и кренящий момент разгоняют судно), S2 — где l + lкр < 0 (восстанавливающий момент тормозит) */
+    var st = 0.05, a = P.A.a, F = 0, S1 = 0, aS1 = null, aS2 = null, prev = l(a) + lkr, thD = null, S2max = 0;
+    while (a > -90 + 1e-9) {
+      var b = Math.max(-90, a - st), vb = l(b) + lkr, dF = (prev + vb) / 2 * (a - b) / R;
+      if (aS1 === null) { if (prev >= 0 && vb < 0) { aS1 = b + (a - b) * vb / (vb - prev); S1 = F; } }
+      else if (aS2 === null && prev <= 0 && vb > 0) { aS2 = b + (a - b) * vb / (vb - prev); break; }
+      var F1 = F + dF;
+      if (aS1 !== null && thD === null && F1 <= 0) thD = a - (a - b) * F / (F - F1);
+      F = F1; if (aS1 !== null) S2max = Math.max(S2max, S1 - F); prev = vb; a = b;
+    }
+    if (aS1 === null) S1 = F;
+    return { thD: thD, S1: S1, S2max: S2max, aS1: aS1, aS2: aS2, capsize: thD === null };
+  }
+  function parseTanks(s, warn) {
+    var T = [];
+    String(s || "").split(/\n/).forEach(function (ln) {
+      ln = ln.trim(); if (!ln || /^#/.test(ln)) return;
+      var p = ln.split(";").map(function (x) { return x.trim(); });
+      var v = p.slice(1).map(nm);
+      if (p.length < 6 || v.some(function (x) { return !isFinite(x); })) { warn.push("Танки: строка «" + ln + "» пропущена — нужно: наименование; P100; zp100; y; δz; δmh50."); return; }
+      T.push({ name: p[0], P: v[0], z: v[1], y: v[2], dz: v[3], mh: v[4], side: v[2] > 0.05 ? "П" : v[2] < -0.05 ? "Л" : "Д" });
+    });
+    return T;
+  }
+  function t31(DW) { var d = lerp(T31.dw, T31.d, DW), q = lerp(T31.dw, T31.q, DW); return { d: d.v, q: q.v, i: d.i, DWm: T31.dw[d.i], DWb: T31.dw[d.i + 1], dm: T31.d[d.i], db: T31.d[d.i + 1], qm: T31.q[d.i], qb: T31.q[d.i + 1] }; }
+
+  function calc(d) {
+    var warn = [], N = num(d.n, 0), F = frm(d);
+    var kD = N <= 20 ? F.D1 : F.D2, kH = N <= 10 ? F.H1 : N <= 20 ? F.H2 : F.H3;
+    var DWf = kD[0] + kD[1] * N, hf = kH[0] + kH[1] * N;
+    var DW = isFinite(nm(d.DWx)) ? nm(d.DWx) : DWf, h = isFinite(nm(d.hx)) ? nm(d.hx) : hf;
+    var man = null;
+    if (d.lsrc === "man") { man = String(d.lman || "").split(/[;\s\n]+/).filter(Boolean).map(nm).filter(isFinite); if (man.length !== THT.length) { warn.push("Ручной ввод плеч: нужно " + THT.length + " значений (θ = " + THT.join(", ") + "°) — введено " + man.length + ". Взяты значения по универсальной ДСО."); man = null; } }
+    var D0 = DP + DW, S0 = dso(DW, h, man), l = S0.l, U = S0.U;
+    if (U.clamped) warn.push("DW = " + f(DW, 0) + " т вне диапазона универсальной ДСО (600…14 600 т) — кривая взята по ближайшему DW.");
+    if (!man && U.panel === "а") warn.push("Кривые рис. 4.4, а при θ ≥ 80° на рисунке почти вертикальны и сливаются — плечи при 80° и 90° приближённые.");
+    if (h >= 0) warn.push("h = " + f(h, 2) + " м ≥ 0 — начальная остойчивость не отрицательна, участка неустойчивых положений равновесия нет.");
+    var P = params(l, h);
+    if (h < 0 && P.thA === null) warn.push("Плечи ДСО отрицательны при всех углах — судно не имеет устойчивого положения равновесия (опрокидывается).");
+    var rows = THT.map(function (a) { return { a: a, s: sin(a), C: man ? null : U.fn(a), ray: (1 - h) * sin(a), l: l(a) }; });
+    var dyn = null, lkr = 0, Mkr = 0;
+    if (P.A) { lkr = -P.A.l; Mkr = D0 * lkr; dyn = dynamic(l, P, lkr); }
+    /* балласт: операции спрямления (табл. 3, 4) */
+    var T = parseTanks(d.tanks || TANKS0, warn);
+    T.forEach(function (t) { t.My = t.P * t.y; });
+    var Lb = T.filter(function (t) { return t.y < -0.05; }), Pb = T.filter(function (t) { return t.y > 0.05; });
+    function op(list, k) { return list.map(function (t) { return { t: t, lkr: k * t.P * Math.abs(t.y) / D0 }; }).sort(function (a, b) { return b.lkr - a.lkr; }).slice(0, 3); }
+    var ops = [{ name: "Приём балласта в порожние танки на борт, противоположный крену судна (ЛБ)", rows: op(Lb, 1), k: 1 },
+      { name: "Откатка балласта из танков с борта, на который наклонено судно (ПрБ)", rows: op(Pb, 1), k: 1 },
+      { name: "Перекрёстное перемещение балласта с борта наклонения на противоположный борт (плечо 2y)", rows: op(Pb, 2), k: 2 }];
+    /* табл. 5 */
+    var t0 = t31(DW);
+    T.forEach(function (t) {
+      t.dd = t.P / (100 * t0.q); t.hp100 = t.P / (D0 + t.P) * (t0.d + t.dd / 2 - h - t.z);
+      t.P50 = t.P / 2; t.z50 = t.z - t.dz * t.P50 / 10; t.dd50 = t.P50 / (100 * t0.q);
+      t.hi50 = -t.mh / (D0 + t.P50); t.hp50 = t.P50 / (D0 + t.P50) * (t0.d + t.dd50 / 2 - h - t.z50); t.h50 = t.hi50 + t.hp50;
+      t.ok = t.h50 >= -0.01 - 1e-9 && t.hp100 > 0; t.allowed = t.ok && t.y >= -0.05;
+    });
+    /* последовательность балластировки */
+    var seq = [];
+    if (d.seqMode === "man") {
+      String(d.seqTxt || "").split(/\n|;/).map(function (x) { return x.trim(); }).filter(Boolean).forEach(function (s) {
+        var t = T.filter(function (q) { return q.name.toLowerCase().replace(/\s+/g, "") === s.toLowerCase().replace(/\s+/g, ""); })[0];
+        if (!t) warn.push("Последовательность балластировки: танк «" + s + "» не найден."); else if (seq.indexOf(t) < 0) seq.push(t);
+      });
+    } else seq = T.filter(function (t) { return t.allowed; }).sort(function (a, b) { return b.h50 - a.h50; });
+    var steps = [], hc = h, dc = t0.d, DWc = DW, target = 0.05, reached = h >= target;
+    for (var i = 0; i < seq.length && !reached; i++) {
+      var t = seq[i], tq = t31(DWc), dd = t.P / (100 * tq.q), Dc = DP + DWc, dh = t.P / (Dc + t.P) * (dc + dd / 2 - hc - t.z);
+      if (dh <= 0 && d.seqMode !== "man") { t.skip = true; continue; }
+      steps.push({ t: t, no: steps.length + 1, d: dc, q: tq.q, dd: dd, D: Dc, h0: hc, z: t.z, dh: dh, h1: hc + dh, DW1: DWc + t.P });
+      hc += dh; dc += dd; DWc += t.P; t.order = steps.length;
+      if (hc >= target) reached = true;
+    }
+    var hv = hc, DWv = DWc, Sv = dso(DWv, hv, null), Pv = params(Sv.l, hv), My = steps.reduce(function (a, x) { return a + x.t.P * x.t.y; }, 0), lMy = My / (DP + DWv);
+    var thMy = null; if (Math.abs(lMy) > 1e-4) { thMy = zero(function (a) { return Sv.l(a) - lMy; }, Math.max(0, Pv.thA || 0) + 0.02, 89.9, false); if (thMy === null && Pv.thA !== null) thMy = zero(function (a) { return Sv.l(a) - lMy; }, 0.02, 89.9, true); }
+    if (!reached) warn.push("Балластировкой выбранных танков hв = " + f(hv, 3) + " м — до +0,05 м не доходит; результат — максимально возможное увеличение метацентрической высоты (методичка).");
+    return { N: N, F: F, kD: kD, kH: kH, DW: DW, DWf: DWf, h: h, hf: hf, D0: D0, U: U, l: l, man: man, P: P, rows: rows, lkr: lkr, Mkr: Mkr, dyn: dyn,
+      T: T, ops: ops, t0: t0, seq: seq, steps: steps, hv: hv, DWv: DWv, Sv: Sv, Pv: Pv, My: My, lMy: lMy, thMy: thMy, reached: reached, warn: warn };
+  }
+
+  function degs(x) { return x === null || x === undefined ? "—" : f(x, 1) + "°"; }
+  function steps(d, c) {
+    var s = [], N = c.N, P = c.P;
+    var byD = Math.abs(c.DW - c.DWf) < 1e-6, byH = Math.abs(c.h - c.hf) < 1e-6;
+    s.push({ no: 1, noLabel: "", title: "Исходные данные",
+      paras: ["Судно — т/х «Новгород» [1]. Начальная остойчивость аварийного судна упала до отрицательных значений (причины не рассматриваются); смещений груза нет. Порядковый номер в группе N = " + N + "."],
+      lines: [byD ? ftxt("DWа", c.kD, N, c.DW, 0, " т") + (N <= 20 ? "  (N = 1…20)" : "  (N ≥ 21)") : "DWа = " + f(c.DW, 0) + " т (задано)",
+        byH ? ftxt("hа", c.kH, N, c.h, 2, " м", 2) + (N <= 10 ? "  (N = 1…10)" : N <= 20 ? "  (N = 11…20)" : "  (N ≥ 21)") : "hа = " + f(c.h, 3) + " м (задано)",
+        "Δа = Δп + DWа = " + f(DP, 0) + " + " + f(c.DW, 0) + " = " + f(c.D0, 0) + " т  (Δп — табл. 3.1 [1])"] });
+    var U = c.U;
+    s.push({ no: 2, noLabel: "", title: "Построение ДСО с отрицательной начальной метацентрической высотой",
+      paras: c.man ? ["Плечи статической остойчивости сняты с универсальной ДСО т/х «Новгород» самостоятельно и введены вручную."] :
+        ["Плечи сняты с универсальной ДСО т/х «Новгород» (рис. 4.4, " + U.panel + " [1]). Кривую для DWа = " + f(c.DW, 0) + " т проводим интерполяцией между кривыми DW = " + f(U.lo, 0) + " и " + f(U.hi, 0) + " т (k = " + f(U.k, 2) + "). На шкале h откладываем hа = " + f(c.h, 2) + " м (выше точки 0 — значение отрицательное) и проводим луч в начало координат. Ось углов диаграммы — в масштабе sin θ (вертикали λ·sin θ).",
+          "Плечо — отрезок вертикали между лучом и кривой DWа: l = C − (1 − hа)·sin θ = C − " + f(1 - c.h, 2) + "·sin θ. Угол заката θv — точка пересечения луча с кривой: λv = λ·sin θv, θv = arcsin(λv/λ)."],
+      tables: [{ title: "Таблица 2. Плечи статической остойчивости", headers: ["θ, °"].concat(THT.map(String)), rows: (c.man ? [] : [
+        ["C, м"].concat(c.rows.map(function (r) { return f(r.C, 3); })),
+        ["(1 − hа)·sin θ, м"].concat(c.rows.map(function (r) { return f(r.ray, 3); }))]).concat([["lа, м"].concat(c.rows.map(function (r) { return f(r.l, 3); }))]),
+        widths: [3.2].concat(THT.map(function () { return 1.15; })), size: 8 }],
+      figs: c.man ? [] : ["uni"] });
+    s.push({ no: 3, noLabel: "", title: "Параметры ДСО аварийного судна",
+      paras: ["ДСО построена на оба борта (l(−θ) = −l(θ)): на участке от −θа до +θа положения равновесия неустойчивы, устойчивые положения — ±θа; судно сидит с креном θа на правый или на левый борт. Для определённости крен — на правый борт (+θа)."],
+      tables: [{ headers: ["Параметр", "Значение"], rows: [["Дедвейт DWа, т", f(c.DW, 0)], ["Начальная метацентрическая высота hа, м", f(c.h, 2)], ["Угол крена ±θа", P.thA === null ? "—" : "±" + f(P.thA, 1) + "°"], ["Угол заката θvа", degs(P.thV)],
+        ["Протяжённость участка положительных плеч θvа − θа", P.thA === null ? "—" : f(P.end - P.thA, 1) + "°" + (P.thV === null ? " (до 90°)" : "")], ["Максимальное плечо lа max, м (при θ)", f(P.max.l, 3) + " (" + f(P.max.a, 0) + "°)"],
+        ["Площадь под положительным участком, м·рад", f(P.S, 4)]], widths: [9, 5] }],
+      figs: ["dso"], answer: "θа = ±" + degs(P.thA) + "; θvа = " + degs(P.thV) + "; lmax = " + f(P.max.l, 3) + " м" });
+    s.push({ no: 4, noLabel: "", title: "Схемы сил восстанавливающего момента",
+      paras: ["θ < θа: метацентр m ниже центра тяжести G, пара сил веса и плавучести действует по направлению наклонения (l < 0) — положение неустойчиво, крен увеличивается.",
+        "θ = θа: линии действия сил веса и плавучести совпадают (l = 0) — устойчивое положение равновесия: судно сидит с креном θа.",
+        "θ > θа: пара сил действует навстречу наклонению (l > 0) — судно возвращается к углу θа."], figs: ["forces"] });
+    if (P.A) {
+      var dy = c.dyn;
+      s.push({ no: 5, noLabel: "", title: "Моделирование спрямления: критический кренящий момент и динамический крен",
+        paras: ["Постепенно нарастающий кренящий момент на левый борт уменьшает крен до точки A — предельного состояния (минимум плеча на участке 0…θа). Дальнейшее увеличение момента вызывает динамическое наклонение на левый борт: работа кренящего момента и восстанавливающего момента сравнивается по равенству площадей S1 = S2 (с учётом того, что на участке от A до −θа сама диаграмма действует как кренящая)."],
+        lines: ["точка A: θ = " + f(P.A.a, 1) + "°, плечо l = " + f(P.A.l, 3) + " м → критическое плечо lкр.а = " + f(c.lkr, 3) + " м",
+          "Mкр.а = (Δп + DWа)·lкр.а = " + f(c.D0, 0) + "·" + f(c.lkr, 3) + " = " + f(c.Mkr, 0) + " т·м",
+          dy.aS1 === null || dy.S2max < 5e-5 ? "lкр.а = " + f(c.lkr, 3) + " м ≥ lmax = " + f(P.max.l, 3) + " м — на левом борту восстанавливающий момент не может уравновесить кренящий (площади S2 нет): судно ОПРОКИДЫВАЕТСЯ на левый борт" :
+          dy.capsize ? "работа кренящего момента S1 = " + f(dy.S1, 4) + " м·рад больше запаса динамической остойчивости S2max = " + f(dy.S2max, 4) + " м·рад — равенство S1 = S2 не достигается: судно ОПРОКИДЫВАЕТСЯ на левый борт" :
+            "равенство площадей S1 = S2 = " + f(dy.S1, 4) + " м·рад → динамический угол крена на левый борт θд = " + f(dy.thD, 1) + "°"],
+        figs: ["dso"], answer: "lкр.а = " + f(c.lkr, 3) + " м; Mкр.а = " + f(c.Mkr, 0) + " т·м; " + (dy.capsize ? "опрокидывание" : "θд = " + f(dy.thD, 1) + "°") });
+      var hd4 = ["Наименование танка", "lкр, м", "Сравнение lкр с lкр.а", "Вывод о возможности критического наклонения"];
+      var rows4 = [];
+      c.ops.forEach(function (o) {
+        rows4.push({ span: o.name });
+        o.rows.forEach(function (r) {
+          var gt = r.lkr > c.lkr, lmx = P.max.l;
+          rows4.push([r.t.name + " (P = " + f(r.t.P, 1) + " т, y = " + f(r.t.y, 1) + " м)", f(r.lkr, 3), f(r.lkr, 3) + (gt ? " > " : " < ") + f(c.lkr, 3),
+            !gt ? "незначительное уменьшение крена; при дальнейшем увеличении спрямляющего воздействия — критическое положение" : (r.lkr > lmx ? "динамическое наклонение на левый борт и опрокидывание (lкр > lmax = " + f(lmx, 3) + " м)" : dy.capsize ? "динамическое наклонение на левый борт и опрокидывание" : "динамическое наклонение на левый борт до θд ≈ " + f(dy.thD, 0) + "°")]);
+        });
+      });
+      s.push({ no: 6, noLabel: "", title: "Оценка действий с балластом при спрямлении",
+        paras: ["Плечо кренящего момента от операции с балластом: lкр = My/(Δп + DWа), My = P·y; ординаты y сняты со схемы танков (стр. 225 [1]). Для каждой операции — три наибольших значения; перекрёстное перемещение — условно на плечо 2y."],
+        tables: [{ title: "Таблица 3. Балластные танки т/х «Новгород»", headers: ["Наименование", "P, т", "y, м", "My, т·м"], rows: c.T.map(function (t) { return [t.name, f(t.P, 1), f(t.y, 1), f(t.My, 1)]; }), widths: [6, 2.5, 2.5, 3] },
+          { title: "Таблица 4. Результаты операций с балластными танками", headers: hd4, rows: rows4, widths: [5, 1.8, 3.2, 6.5], size: 8.5 }],
+        after: ["Влияние на остойчивость: приём балласта в порожний танк двойного дна в конце повышает остойчивость (ЦТ балласта ниже нейтральной плоскости), но в процессе приёма возникает свободная поверхность; откатка балласта уменьшает метацентрическую высоту сразу по двум причинам — снятие груза ниже нейтральной плоскости и свободная поверхность; перекрёстная перекачка даёт две свободные поверхности одновременно. Во всех случаях участок неустойчивых положений от −θа до +θа увеличится, плечи и запас динамической остойчивости уменьшатся — выводы таблицы 4 усугубятся.",
+          "Вывод: ни одно из смоделированных действий по спрямлению недопустимо — сначала необходимо восстановить остойчивость."] });
+    }
+    var t0 = c.t0;
+    s.push({ no: 7, noLabel: "", title: "Характеристики балластных танков (влияние на начальную остойчивость)",
+      paras: ["Изменение метацентрической высоты при приёме балласта: δhp = P/(Δп + DWа + P)·(dа + δdа/2 − hа − zp), δdа = P/(100·q). При 50 % заполнения: P50 = P100/2; zp50 = zp100 − δz·P50/10; поправка на свободную поверхность δhi50 = −δmh50/(Δп + DWа + P50); δh50 = δhi50 + δhp50."],
+      lines: ["dа = dм + (DWа − DWм)·(dб − dм)/(DWб − DWм) = " + f(t0.dm, 2) + " + (" + f(c.DW, 0) + " − " + f(t0.DWm, 0) + ")·(" + f(t0.db, 2) + " − " + f(t0.dm, 2) + ")/(" + f(t0.DWb, 0) + " − " + f(t0.DWm, 0) + ") = " + f(t0.d, 3) + " м",
+        "q = qм + (DWа − DWм)·(qб − qм)/(DWб − DWм) = " + f(t0.qm, 1) + " + (" + f(c.DW, 0) + " − " + f(t0.DWm, 0) + ")·(" + f(t0.qb, 1) + " − " + f(t0.qm, 1) + ")/" + f(t0.DWb - t0.DWm, 0) + " = " + f(t0.q, 2) + " т/см"],
+      tables: [{ title: "Таблица 5. Характеристики балластных танков", headers: ["Наименование", "P100, т", "zp100, м", "δhp100, м", "P50, т", "δz", "zp50, м", "δmh50, т·м", "δhi50, м", "δhp50, м", "δh50, м", "Посл."],
+        rows: c.T.map(function (t) { return [t.name, f(t.P, 1), f(t.z, 2), f(t.hp100, 3), f(t.P50, 2), f(t.dz, 2), f(t.z50, 2), f(t.mh, 0), f(t.hi50, 3), f(t.hp50, 3), f(t.h50, 3), t.order ? String(t.order) : "—"]; }),
+        widths: [3.6, 1.3, 1.3, 1.4, 1.3, 1, 1.3, 1.4, 1.4, 1.4, 1.4, 0.9], size: 7.5 }] });
+    var st = c.steps;
+    s.push({ no: 8, noLabel: "", title: "Восстановление остойчивости балластировкой",
+      paras: [d.seqMode === "man" ? "Последовательность балластировки задана курсантом." :
+        "Отбор танков (рекомендации методички и доски): ① ZG ↓ — ЦТ балласта ниже нейтральной плоскости (δhp100 > 0, т. е. zp < dа + δd/2 − hа); ② YG ≥ 0 — танки противоположного крену борта (ЛБ) не заполняются, пока остойчивость не станет положительной (нет спрямляющего воздействия); ③ откатка из танков двойного дна исключается; ④ δh50 = δhi50 + δhp50 ≥ 0 (допускается уменьшение не более 1 см). Отобранные танки балластируются по убыванию δh50 — каждый до запрессовки (100 %).",
+        "Приращение остойчивости — пошагово: δhpk = Pk/(Δk−1 + Pk)·(dk−1 + δdk/2 − hk−1 − zpk), dk = dk−1 + δdk, hk = hk−1 + δhpk; цель — hв = hа + ΣδhP ≥ 0,05 м."],
+      tables: st.length ? [{ title: "Пошаговая балластировка", headers: ["№", "Танк", "P, т", "d, м", "q, т/см", "δd, м", "zp, м", "h до, м", "δhp, м", "h после, м", "DW, т"],
+        rows: st.map(function (x) { return [String(x.no), x.t.name, f(x.t.P, 1), f(x.d, 3), f(x.q, 2), f(x.dd, 3), f(x.z, 2), f(x.h0, 3), f(x.dh, 3), f(x.h1, 3), f(x.DW1, 0)]; }),
+        widths: [0.7, 3.6, 1.3, 1.3, 1.3, 1.2, 1.2, 1.4, 1.3, 1.5, 1.4], size: 8 }] : [],
+      lines: ["DWв = DWа + ΣP = " + f(c.DW, 0) + (st.length ? " + " + st.map(function (x) { return f(x.t.P, 1); }).join(" + ") : "") + " = " + f(c.DWv, 1) + " т",
+        "hв = hа + ΣδhP = " + f(c.h, 2) + (st.length ? " + " + st.map(function (x) { return par(x.dh, 3); }).join(" + ") : "") + " = " + f(c.hv, 3) + " м " + (c.reached ? "≥ 0,05 м" : "< 0,05 м"),
+        "кренящий момент принятого балласта ΣMy = ΣP·y = " + f(c.My, 0) + " т·м (YG > 0 — на ПрБ, спрямляющего воздействия нет); плечо lкр = ΣMy/(Δп + DWв) = " + f(c.lMy, 3) + " м" + (c.thMy !== null ? " → крен на ПрБ по ДСО после балластировки ≈ " + f(c.thMy, 1) + "°" : "")],
+      answer: "DWв = " + f(c.DWv, 0) + " т; hв = " + f(c.hv, 3) + " м" });
+    var Pv = c.Pv;
+    s.push({ no: 9, noLabel: "", title: "ДСО после восстановления остойчивости",
+      tables: [{ headers: ["Параметр", "Аварийное судно", "После восстановления"], rows: [
+        ["Дедвейт DW, т", f(c.DW, 0), f(c.DWv, 0)], ["Метацентрическая высота h, м", f(c.h, 3), f(c.hv, 3)],
+        ["Угол крена θ", P.thA === null ? "—" : f(P.thA, 1) + "°", Pv.thA === null ? "—" : f(Pv.thA, 1) + "°"], ["Угол заката θv", degs(P.thV), degs(Pv.thV)],
+        ["Протяжённость положительных плеч θv − θ", P.thA === null ? "—" : f(P.end - P.thA, 1) + "°", Pv.thA === null ? "—" : f(Pv.end - Pv.thA, 1) + "°"],
+        ["Максимальное плечо lmax, м", f(P.max.l, 3), f(Pv.max.l, 3)], ["Площадь под положительным участком, м·рад", f(P.S, 4), f(Pv.S, 4)]], widths: [7, 3.5, 3.5] }],
+      paras: ["ДСО для DWв = " + f(c.DWv, 0) + " т и hв = " + f(c.hv, 3) + " м построена по универсальной ДСО (рис. 4.4, " + c.Sv.U.panel + " [1]) так же, как в п. 2."],
+      figs: ["dsoV"] });
+    var better = Pv.S > P.S;
+    s.push({ no: 10, noLabel: "", title: "Выводы",
+      paras: ["Крен аварийного судна вызван отрицательной начальной остойчивостью (hа = " + f(c.h, 2) + " м), а не кренящим моментом. Попытка спрямления балластом при этом опасна: при плече кренящего момента больше критического (lкр.а = " + f(c.lkr, 3) + " м) судно динамически заваливается на противоположный борт" + (c.dyn && !c.dyn.capsize ? " (до θд ≈ " + f(c.dyn.thD, 0) + "°)" : " и может опрокинуться") + "; откатка и перекачка балласта дополнительно уменьшают остойчивость.",
+        "Безопасная последовательность — восстановление остойчивости: приём балласта в танки, расположенные ниже нейтральной плоскости, с малыми свободными поверхностями, начиная с танков с наибольшей положительной поправкой δh50, без спрямляющего воздействия (сначала ДП и борт крена). " +
+        (c.reached ? "В результате получено hв = " + f(c.hv, 3) + " м ≥ 0,05 м: крен исчезает, ДСО становится обычной." : "Балластировкой выбранных танков метацентрическая высота увеличена с " + f(c.h, 2) + " до " + f(c.hv, 3) + " м (положительной не стала): угол крена уменьшился с " + degs(P.thA) + " до " + degs(Pv.thA) + ", " + (better ? "запас динамической остойчивости увеличился." : "дальнейшие меры — снятие груза с высоких уровней.")) ] });
+    return s;
+  }
+
+  /* ---------- чертежи ---------- */
+  function drawUni(cvs, c, DW, h, S) {
+    var U = S.U, P = U.P, W = 1400, H = 1050, g = cv(cvs, W, H), x0 = 120, y0 = 90, w = 1060, hh = 860;
+    var top = Math.max(1.45, Math.ceil((1 - h + 0.05) * 10) / 10), bot = Math.min(-0.1, Math.floor(Math.min.apply(null, P.C.map(function (r) { return Math.min.apply(null, r); })) * 10) / 10);
+    var px = function (a) { return x0 + sin(a) * w; }, py = function (v) { return y0 + hh - (v - bot) / (top - bot) * hh; };
+    [0, 10, 20, 30, 40, 50, 60, 70, 80, 90].forEach(function (a) { line(g, [[px(a), py(bot)], [px(a), py(top)]], { c: "#d6dde3", w: 1 }); txt(g, String(a), px(a), py(0) + 18, { s: 14, c: "#333" }); });
+    [5, 15, 25].forEach(function (a) { line(g, [[px(a), py(bot)], [px(a), py(top)]], { c: "#e2b6b6", w: 1, dash: [6, 5] }); txt(g, "λ·sin " + a + "°", px(a), py(top) - 10, { s: 12, c: "#a33" }); });
+    for (var v = Math.ceil(bot * 10) / 10; v <= top + 1e-9; v += 0.1) { line(g, [[x0, py(v)], [px(90), py(v)]], { c: "#d6dde3", w: 1 }); txt(g, f(1 - v, 1), px(90) + 10, py(v), { s: 13, c: "#1b6fb3", a: "left" }); }
+    txt(g, "h, м", px(90) + 10, py(top) - 24, { s: 15, w: "700", c: "#1b6fb3", a: "left" });
+    line(g, [[x0, py(0)], [px(90), py(0)]], { c: "#333", w: 1.6 });
+    var labs = [];
+    P.dw.forEach(function (dw, i) {
+      var fn = pchip(P.th, P.C[i]), pts = []; for (var a = 0; a <= 90; a += 1) pts.push([px(a), py(fn(a))]);
+      var hl = dw === U.lo || dw === U.hi; line(g, pts, { c: hl ? "#777" : "#bbb", w: hl ? 2 : 1.4 });
+      var am = P.th[P.C[i].indexOf(Math.max.apply(null, P.C[i]))]; labs.push({ t: String(dw), x: px(am), y: py(fn(am)) - 11, c: hl ? "#333" : "#999" });
+    });
+    labs.sort(function (a, b) { return a.y - b.y; }).forEach(function (L, i, arr) { if (i && Math.abs(L.x - arr[i - 1].x) < 50 && L.y - arr[i - 1].y < 15) L.y = arr[i - 1].y + 15; txt(g, L.t, L.x, L.y, { s: 12, c: L.c }); });
+    var p2 = []; for (var a = 0; a <= 90; a += 0.5) p2.push([px(a), py(U.fn(a))]); line(g, p2, { c: "#111", w: 3.5 });
+    line(g, [[px(0), py(0)], [px(90), py(1 - h)]], { c: "#c0392b", w: 2.5 });
+    dot(g, px(90), py(1 - h), 6, "#c0392b"); txt(g, "h = " + f(h, 2) + " м", px(90) - 12, py(1 - h) - 16, { s: 15, w: "700", c: "#c0392b", a: "right" });
+    THT.forEach(function (a) { var yr = (1 - h) * sin(a), yc = U.fn(a); line(g, [[px(a), py(yr)], [px(a), py(yc)]], { c: "#1b8a3a", w: 2.5 }); if (a <= 70) txt(g, f(yc - yr, 2), px(a) + 4, py((yr + yc) / 2), { s: 13, c: "#1b8a3a", a: "left", w: "700" }); });
+    var Pp = S.P || params(S.l, h);
+    if (Pp.thV !== null) { var xv = px(Pp.thV); dot(g, xv, py((1 - h) * sin(Pp.thV)), 6, "#8e44ad"); txt(g, "v", xv + 8, py((1 - h) * sin(Pp.thV)) - 12, { s: 16, w: "700", c: "#8e44ad" });
+      line(g, [[xv, py((1 - h) * sin(Pp.thV))], [xv, py(0)]], { c: "#8e44ad", w: 1.5, dash: [5, 4] }); txt(g, "λv", (x0 + xv) / 2, py(0) + 40, { s: 14, c: "#8e44ad", w: "700" }); arrow(g, (x0 + xv) / 2 - 20, py(0) + 30, x0, py(0) + 30, { c: "#8e44ad", w: 1.2, hl: 8 }); arrow(g, (x0 + xv) / 2 + 20, py(0) + 30, xv, py(0) + 30, { c: "#8e44ad", w: 1.2, hl: 8 }); }
+    txt(g, "Универсальная ДСО т/х «Новгород» (рис. 4.4, " + U.panel + "): DW = " + f(DW, 0) + " т, h = " + f(h, 2) + " м", W / 2, 34, { s: 20, w: "700" });
+  }
+  function two(cvs, list, title, marks, lim) {
+    var W = 1400, H = 950, g = cv(cvs, W, H), mn = 0, mx = 0;
+    list.forEach(function (o) { for (var a = 0; a <= (lim || 90); a += 1) { var v = o.l(a); mn = Math.min(mn, v); mx = Math.max(mx, v); } });
+    var M = Math.max(Math.abs(mn), mx), st = M > 1.2 ? 0.2 : M > 0.6 ? 0.1 : M > 0.25 ? 0.05 : 0.02, Y = Math.ceil(M * 1.08 / st) * st;
+    var A = axes(g, [80, 80, 1240, 780], [-90, 90, 10, 0], [-Y, Y, st, st < 0.05 ? 2 : st < 0.1 ? 2 : 1], ["θ, °", "l, м"]);
+    txt(g, title, W / 2, 32, { s: 21, w: "700" });
+    txt(g, "ЛБ", A.px(-80), A.py(0) - 26, { s: 20, w: "700", c: "#555" }); txt(g, "ПрБ", A.px(80), A.py(0) - 26, { s: 20, w: "700", c: "#555" });
+    if (marks) marks(g, A);
+    g.save(); g.beginPath(); g.rect(80, 80, 1240, 780); g.clip();
+    list.forEach(function (o) { var p = []; for (var a = -90; a <= 90 + 1e-9; a += 0.5) p.push([A.px(a), A.py(o.l(a))]); line(g, p, { c: o.c || "#1b3f8f", w: o.w || 3.5, dash: o.dash }); });
+    g.restore();
+    return { g: g, A: A };
+  }
+  function hatch(g, poly, col) {
+    g.save(); g.beginPath(); poly.forEach(function (p, i) { i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]); }); g.closePath(); g.fillStyle = col.replace(/[\d.]+\)$/, "0.15)"); g.fill(); g.clip();
+    for (var k = -1400; k < 1400; k += 12) line(g, [[k, 950], [k + 950, 0]], { c: col, w: 1.2 }); g.restore();
+  }
+  function drawDso(cvs, c) {
+    var P = c.P, l = c.l, dy = c.dyn, Bl = "#1b3f8f", Rd = "#c0392b";
+    var lim = Math.min(90, (P.thV === null ? 90 : P.thV) + 15);
+    two(cvs, [{ l: l, c: Bl }], "ДСО аварийного судна с отрицательной начальной метацентрической высотой (DWа = " + f(c.DW, 0) + " т, hа = " + f(c.h, 2) + " м)", function (g, A) {
+      if (P.A && dy) {
+        var lk = -c.lkr, a1 = dy.aS1 === null ? -90 : dy.aS1, aD = dy.thD === null ? -90 : dy.thD;
+        var p1 = []; for (var a = P.A.a; a >= a1 - 1e-9; a -= 0.25) p1.push([A.px(a), A.py(l(a))]); p1.push([A.px(a1), A.py(lk)]); p1.push([A.px(P.A.a), A.py(lk)]); hatch(g, p1, "rgba(192,57,43,0.55)");
+        var p2 = []; for (a = a1; a >= aD - 1e-9; a -= 0.25) p2.push([A.px(a), A.py(Math.min(l(a), lk))]); p2.push([A.px(aD), A.py(lk)]); hatch(g, p2, "rgba(27,111,179,0.55)");
+        line(g, [[A.px(P.A.a), A.py(lk)], [A.px(aD), A.py(lk)]], { c: Rd, w: 2.5 });
+        txt(g, "lкр.а = " + f(c.lkr, 3) + " м", A.px(P.A.a) + 10, A.py(lk) + 22, { s: 15, w: "700", c: Rd, a: "left" });
+        dot(g, A.px(P.A.a), A.py(P.A.l), 7, Rd); txt(g, "A", A.px(P.A.a) + 12, A.py(P.A.l) + 4, { s: 18, w: "700", c: Rd, a: "left" });
+        var cx = (P.A.a + a1) / 2; txt(g, "S1", A.px(cx), A.py((l(cx) + lk) / 2), { s: 18, w: "700", c: Rd });
+        if (dy.thD !== null) { var cx2 = (a1 + aD) / 2; txt(g, "S2", A.px(cx2), A.py((l(cx2) + lk) / 2), { s: 18, w: "700", c: "#1b6fb3" });
+          line(g, [[A.px(aD), A.py(0)], [A.px(aD), A.py(lk)]], { c: "#1b6fb3", w: 2, dash: [6, 4] }); dot(g, A.px(aD), A.py(lk), 6, "#1b6fb3"); txt(g, "θд = " + f(aD, 1) + "°", A.px(aD), A.py(0) - 18, { s: 15, w: "700", c: "#1b6fb3" }); }
+        else txt(g, "опрокидывание", A.px(-60), A.py(lk) + 26, { s: 16, w: "700", c: Rd });
+      }
+      if (P.thA !== null) [P.thA, -P.thA].forEach(function (a) { dot(g, A.px(a), A.py(0), 6, "#111"); txt(g, (a > 0 ? "+" : "−") + "θа", A.px(a), A.py(0) + (a > 0 ? 40 : -40), { s: 16, w: "700" }); });
+      if (P.thV !== null) [P.thV, -P.thV].forEach(function (a) { dot(g, A.px(a), A.py(0), 6, "#8e44ad"); txt(g, (a > 0 ? "" : "−") + "θv", A.px(a), A.py(0) + (a > 0 ? 40 : -40), { s: 16, w: "700", c: "#8e44ad" }); });
+      if (P.max.l > 0) { dot(g, A.px(P.max.a), A.py(P.max.l), 5, Bl); txt(g, "lmax = " + f(P.max.l, 3), A.px(P.max.a), A.py(P.max.l) - 18, { s: 14, w: "700", c: Bl }); }
+    }, lim);
+  }
+  function drawV(cvs, c) {
+    two(cvs, [{ l: c.l, c: "#1b3f8f", dash: [10, 6], w: 3 }, { l: c.Sv.l, c: "#18a0c9" }], "ДСО до (DWа = " + f(c.DW, 0) + " т, hа = " + f(c.h, 2) + " м) и после восстановления остойчивости (DWв = " + f(c.DWv, 0) + " т, hв = " + f(c.hv, 3) + " м)", function (g, A) {
+      [[c.P, "#1b3f8f", "а"], [c.Pv, "#18a0c9", "в"]].forEach(function (q, k) {
+        var P = q[0]; if (P.thA !== null && P.thA > 0) [P.thA, -P.thA].forEach(function (a) { dot(g, A.px(a), A.py(0), 6, q[1]); txt(g, (a > 0 ? "+" : "−") + "θ" + q[2], A.px(a), A.py(0) + (a > 0 ? 40 + 22 * k : -40 - 22 * k), { s: 15, w: "700", c: q[1] }); });
+        if (P.thV !== null) [P.thV, -P.thV].forEach(function (a) { dot(g, A.px(a), A.py(0), 5, q[1]); txt(g, "θv" + q[2], A.px(a), A.py(0) + (a > 0 ? 40 + 22 * k : -40 - 22 * k), { s: 14, w: "700", c: q[1] }); });
+      });
+      line(g, [[930, 120], [990, 120]], { c: "#1b3f8f", w: 3, dash: [10, 6] }); txt(g, "аварийное судно", 1000, 120, { s: 16, a: "left" });
+      line(g, [[930, 150], [990, 150]], { c: "#18a0c9", w: 3.5 }); txt(g, "после восстановления", 1000, 150, { s: 16, a: "left" });
+    }, Math.min(90, Math.max(c.P.thV === null ? 90 : c.P.thV, c.Pv.thV === null ? 90 : c.Pv.thV) + 15));
+  }
+  /* схемы сил: поперечное сечение, накренённое на θ; m ниже G (h < 0) */
+  function drawForces(cvs, c) {
+    var W = 1500, H = 620, g = cv(cvs, W, H), P = c.P, thA = P.thA || 20;
+    var cases = [[Math.max(3, thA * 0.5), "θ < θа"], [thA, "θ = θа"], [Math.min(thA + (P.end - thA) * 0.45, thA + 18), "θ > θа"]];
+    cases.forEach(function (cs, k) {
+      var th = cs[0], ox = 250 + k * 500, oy = 330, s = 13, B = 20, D = 14, dr = 6.5, zg = 8, l = c.l(th), Lsc = 600;
+      var rot = function (x, z) { var a = th * RAD; return [ox + (x * Math.cos(a) + z * Math.sin(a)) * s, oy - (-x * Math.sin(a) + z * Math.cos(a)) * s + 100]; };
+      var hull = [[-B / 2, D], [-B / 2, 2], [-B / 2 + 2, 0], [B / 2 - 2, 0], [B / 2, 2], [B / 2, D]].map(function (p) { return rot(p[0], p[1]); });
+      var wl = rot(0, dr)[1];
+      line(g, [[ox - 190, wl], [ox + 190, wl]], { c: "#1b6fb3", w: 2 }); txt(g, "ВЛ", ox + 196, wl, { s: 14, c: "#1b6fb3", a: "left" });
+      line(g, hull, { w: 2.5, fill: "rgba(0,0,0,0.03)" }); line(g, [rot(0, -1), rot(0, D + 2)], { c: "#555", w: 1.2, dash: [8, 4] }); txt(g, "ДП", rot(0, D + 3)[0], rot(0, D + 3)[1], { s: 13, c: "#555" });
+      var Gp = rot(0, zg), Cx = Gp[0] + l * Lsc, Cp = [Cx, wl + 40];
+      dot(g, Gp[0], Gp[1], 6); txt(g, "G", Gp[0] - 14, Gp[1] - 10, { s: 16, w: "700" });
+      var mp = rot(0, zg + c.h * 2.5); dot(g, mp[0], mp[1], 5, "#8e44ad"); txt(g, "m", mp[0] - 14, mp[1] + 6, { s: 15, w: "700", c: "#8e44ad" });
+      dot(g, Cp[0], Cp[1], 6, "#1b6fb3"); txt(g, "C", Cp[0] + 12, Cp[1] + 4, { s: 16, w: "700", c: "#1b6fb3" });
+      arrow(g, Gp[0], Gp[1], Gp[0], Gp[1] + 95, { w: 2.5 }); txt(g, "Δg", Gp[0] - 26, Gp[1] + 70, { s: 14 });
+      arrow(g, Cp[0], Cp[1], Cp[0], Cp[1] - 140, { w: 2.5, c: "#1b6fb3" }); txt(g, "γ∇", Cp[0] + 26, Cp[1] - 110, { s: 14, c: "#1b6fb3" });
+      if (Math.abs(l) > 0.004) { line(g, [[Gp[0], Gp[1] + 40], [Cx, Gp[1] + 40]], { c: "#c0392b", w: 2 }); txt(g, "l " + (l < 0 ? "< 0" : "> 0"), (Gp[0] + Cx) / 2, Gp[1] + 58, { s: 14, w: "700", c: "#c0392b" }); }
+      else txt(g, "l = 0", Gp[0] + 30, Gp[1] + 50, { s: 14, w: "700", c: "#c0392b", a: "left" });
+      var arc = []; for (var a = -40; a <= 40; a += 4) arc.push([ox + 160 * Math.sin((a) * RAD), oy - 120 + 30 * Math.cos(a * RAD)]);
+      var dir = l < -0.004 ? 1 : l > 0.004 ? -1 : 0;
+      if (dir) { line(g, arc, { c: "#c0392b", w: 2 }); var e = dir > 0 ? arc[arc.length - 1] : arc[0], e2 = dir > 0 ? arc[arc.length - 2] : arc[1]; arrow(g, e2[0], e2[1], e[0], e[1], { c: "#c0392b", w: 2, hl: 12 }); txt(g, dir > 0 ? "момент кренит" : "момент выпрямляет", ox, oy - 145, { s: 15, w: "700", c: "#c0392b" }); }
+      else txt(g, "равновесие", ox, oy - 145, { s: 15, w: "700", c: "#c0392b" });
+      txt(g, cs[1] + " (θ = " + f(th, 0) + "°)", ox, 40, { s: 19, w: "700" });
+    });
+    txt(g, "Вид с кормы, крен на правый борт; m — поперечный метацентр (ниже G: h < 0)", W / 2, H - 20, { s: 15, c: "#444" });
+  }
+
+  var VARS = []; for (var i = 1; i <= 30; i++) VARS.push(String(i));
+  App.taskWork({ disc: "tus", discName: "Теория и устройство судна", sec: "4", id: "tus4-pr2", order: 402, key: "tus4-pr2", file: "ТУС4_ПР2_Отрицательная_остойчивость", no: "ПР 2", short: "ПР №2", eyebrow: "ТУС · 4 курс · Практическая работа №2",
+    titleKind: "Практическая работа", title: "Восстановление мореходных качеств аварийного судна, имеющего отрицательную начальную остойчивость", titleTopic: "Восстановление мореходных качеств аварийного судна, имеющего отрицательную начальную остойчивость (т/х «Новгород»)",
+    desc: "ДСО с h < 0 на оба борта по универсальной диаграмме, критический кренящий момент и динамический крен (S1 = S2), оценка спрямления балластом, характеристики танков и пошаговая балластировка, ДСО после восстановления.",
+    goal: "Цель: смоделировать действия по спрямлению и по восстановлению остойчивости судна с отрицательной начальной метацентрической высотой, сделать выводы об опасности неверных действий и описать безопасную последовательность мероприятий.",
+    hint: "Вводные — по формулам с доски: DWа = 2700 + 400·N (N = 1…20), 6600 − 200·N (N ≥ 21); hа = −0,40 − 0,03·N (1…10), −0,80 + 0,04·N (11…20), −0,30 − 0,01·N (≥ 21). Коэффициенты, DWа, hа, плечи, данные танков и последовательность балластировки можно менять.",
+    variants: VARS, defaultVariant: "8", variantLabel: "Порядковый номер N", variantName: function (v) { return "N = " + v; },
+    variantData: function (v) { var o = { variant: v, fio: "", group: "", n: String(+v), date: "", DWx: "", hx: "", lsrc: "uni", lman: "", tanks: TANKS0, seqMode: "auto", seqTxt: "" }; Object.keys(FD).forEach(function (k) { o[k] = FD[k]; }); return o; },
+    keep: ["fio", "group", "date", "lsrc", "tanks"].concat(Object.keys(FD)),
+    varText: function (d) { var c = calc(d); return "N = " + d.n + ": DWа = " + f(c.DW, 0) + " т, hа = " + f(c.h, 2) + " м"; },
+    sections: [G.FIO,
+      { title: "Формулы вариантов: X = a + b·N", note: "По умолчанию — с доски. В методичке: DWа = 2600 + 400·R (R = 1…20), 6600 − 100·R (R = 21…33); hа = −0,40 − 0,04·R, −0,80 + 0,03·R, −0,30 − 0,01·R.",
+        fields: [["fD1a", "DWа (N = 1…20): a", { num: true, unit: "т" }], ["fD1b", "DWа (N = 1…20): b", { num: true, unit: "т" }], ["fD2a", "DWа (N ≥ 21): a", { num: true, unit: "т" }], ["fD2b", "DWа (N ≥ 21): b", { num: true, unit: "т" }],
+          ["fH1a", "hа (N = 1…10): a", { num: true, unit: "м" }], ["fH1b", "hа (N = 1…10): b", { num: true, unit: "м" }], ["fH2a", "hа (N = 11…20): a", { num: true, unit: "м" }], ["fH2b", "hа (N = 11…20): b", { num: true, unit: "м" }], ["fH3a", "hа (N ≥ 21): a", { num: true, unit: "м" }], ["fH3b", "hа (N ≥ 21): b", { num: true, unit: "м" }]] },
+      { title: "Исходные данные напрямую", note: "Пусто — по формулам выше.", fields: [["DWx", "Дедвейт DWа", { num: true, unit: "т", ph: "по формуле" }], ["hx", "Метацентрическая высота hа", { num: true, unit: "м", ph: "по формуле" }]] },
+      { title: "Плечи ДСО", note: "«По универсальной ДСО» — плечи снимаются с оцифрованной диаграммы (рис. 4.4, а при DW < 6600 т; рис. 4.4, б при DW ≥ 6600 т). «Ввести вручную» — " + THT.length + " значений l через «;» для θ = " + THT.join(", ") + "°.",
+        fields: [["lsrc", "Источник", { select: [["uni", "по универсальной ДСО"], ["man", "ввести вручную"]] }], ["lman", "l для 5…90° через «;»", { area: true, rows: 2, wide: true }]] },
+      { title: "Балластные танки", note: "Строка: наименование; P100, т; zp100, м; y, м (ПрБ «+», ЛБ «−»); δz, м на 10 т; δmh50, т·м. P, z, δz, δmh — табл. 5 методички и прилож. 7 [1]; y — со схемы танков (стр. 225 [1]).",
+        fields: [["tanks", "Танки", { area: true, rows: 8, wide: true }]] },
+      { title: "Последовательность балластировки", note: "«Автоматически» — по рекомендациям методички (ДП и борт крена, δh50 ≥ −0,01 м, по убыванию δh50). «Вручную» — названия танков по строкам в нужном порядке.",
+        fields: [["seqMode", "Режим", { select: [["auto", "автоматически"], ["man", "вручную"]] }], ["seqTxt", "Танки по порядку", { area: true, rows: 3, wide: true }]] }],
+    intro: function (U, d, res) {
+      var c = res.c;
+      [["ФИО курсанта", d.fio], ["№ группы", d.group], ["Порядковый номер в группе", d.n], ["Дата выполнения задания", d.date || ""], ["Судно", "т/х «Новгород»"],
+        ["Исходные данные", "DWа = " + f(c.DW, 0) + " т;  hа = " + f(c.h, 2) + " м"]].forEach(function (p) { U.para([{ t: p[0] + ": ", bold: true }, String(p[1] || "—")], { after: 1 }); });
+      U.para("", { after: 4 });
+    },
+    solve: function (d) { var c = calc(d); var st = steps(d, c); st.forEach(function (x) { x.lines = x.lines || []; x.paras = x.paras || []; }); return { steps: st, warn: c.warn, c: c }; },
+    figs: {
+      uni: { caption: "Снятие плеч с универсальной ДСО т/х «Новгород» при отрицательной метацентрической высоте", draw: function (cvs, pl, d, r) { drawUni(cvs, r.c, r.c.DW, r.c.h, { U: r.c.U, l: r.c.l, P: r.c.P }); } },
+      dso: { caption: "ДСО аварийного судна на оба борта: ±θа, θv, точка A, критическое плечо lкр.а, площади S1 и S2, динамический угол θд", draw: function (cvs, pl, d, r) { drawDso(cvs, r.c); } },
+      forces: { caption: "Схемы сил восстанавливающего момента при θ < θа, θ = θа и θ > θа", draw: function (cvs, pl, d, r) { drawForces(cvs, r.c); } },
+      dsoV: { caption: "ДСО аварийного судна и после восстановления остойчивости", draw: function (cvs, pl, d, r) { drawV(cvs, r.c); } } },
+    _test: { calc: calc },
     summary: false });
 })();
 
