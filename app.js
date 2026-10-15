@@ -3304,17 +3304,17 @@ var LR1Engine = (function () {
     "Восточнее о. Ики": { lon: 129.92, lat: 33.80, d: 7.2 },
     "Пролив Ики": { lon: 129.80, lat: 33.62, d: 7.2 }
   };
-  // Маяки задачи 5 — примерное положение для схемы (по фото карты)
-  // [ключ в названии, долгота, широта, высота огня h, м (японский список маяков / Lighthouse Directory)]
+  // Маяки задачи 5 — примерное положение для схемы (по фото карты) и дальность видимости огня Дк, снятая с карты 62028
+  // [ключ в названии, долгота, широта, Дк, миль (по фото карты; "" — не прочитано, впишите с карты)]
   var LIGHTS = [
-    ["Обаэ", 129.47, 33.45, 101], ["Уманокасира", 129.50, 33.44, 45], ["Нагасаки", 129.56, 33.47, 25], ["Адзутиосима", 129.56, 33.47, 25],
-    ["Мукусима", 129.74, 33.49, 80], ["Футагами", 129.55, 33.72, 99], ["Футогами", 129.55, 33.72, 99], ["Нагасима", 129.63, 33.79, 49],
-    ["Эбоси", 129.982, 33.690, 56], ["Какара", 129.83, 33.60, 71], ["Окиносима", 130.11, 34.24, 246], ["севере о. Ики", 129.70, 33.90, 106],
-    ["Цуцу", 129.19, 34.10, 106], ["Косаки", 129.34, 34.14, 61], ["Яра", 129.33, 34.21, 45], ["Орисе", 129.28, 34.35, 115], ["Кинсаки", 129.21, 34.30, 77]
+    ["Обаэ", 129.47, 33.45, ""], ["Уманокасира", 129.50, 33.44, 3], ["Нагасаки", 129.56, 33.47, 3], ["Адзутиосима", 129.56, 33.47, 3],
+    ["Мукусима", 129.74, 33.49, 12], ["Футагами", 129.55, 33.72, 19], ["Футогами", 129.55, 33.72, 19], ["Нагасима", 129.63, 33.79, 12],
+    ["Эбоси", 129.982, 33.690, 8], ["Какара", 129.83, 33.60, 13], ["Окиносима", 130.11, 34.24, 17], ["севере о. Ики", 129.70, 33.90, ""],
+    ["Цуцу", 129.19, 34.10, 25], ["Косаки", 129.34, 34.14, 13], ["Яра", 129.33, 34.21, 13], ["Орисе", 129.28, 34.35, 13], ["Кинсаки", 129.21, 34.30, ""]
   ];
   function lightPos(name) {
-    for (var i = 0; i < LIGHTS.length; i++) if (String(name).indexOf(LIGHTS[i][0]) >= 0) return { lon: LIGHTS[i][1], lat: LIGHTS[i][2], h: LIGHTS[i][3] };
-    return { lon: 129.6, lat: 33.8, h: "" };
+    for (var i = 0; i < LIGHTS.length; i++) if (String(name).indexOf(LIGHTS[i][0]) >= 0) return { lon: LIGHTS[i][1], lat: LIGHTS[i][2], dk: LIGHTS[i][3] };
+    return { lon: 129.6, lat: 33.8, dk: "" };
   }
 
   function variantData(v) {
@@ -3323,7 +3323,7 @@ var LR1Engine = (function () {
       variant: String(v), group: "", student: "",
       t1L: t[0], t2phi: t[1][0], t2l1: t[1][1], t2l2: t[1][2], t3e: t[2], t3h: 0,
       t4ip: t[3][0], t4g1: t[3][1], t4g2: t[3][2], t4g3: t[3][3],
-      t5e: t[4][0], t5name: t[4][1], t5h: lightPos(t[4][1]).h, t5dk: "",
+      t5e: t[4][0], t5name: t[4][1], t5dk: lightPos(t[4][1]).dk,
       t6mk: t[5][0], t6reg: t[5][1], t6dgk: t[5][2], t6year: 2008, t6d2010: (REGIONS[t[5][1]] || { d: 7.2 }).d, t6chg: 0.04,
       t7C: t[6], t8phi: t[7][0], t8S: t[7][1], t8K: t[7][2] === undefined ? 90 : t[7][2],
       t9p1: t[8][0], t9l1: t[8][1], t9p2: t[8][2], t9l2: t[8][3],
@@ -3355,9 +3355,9 @@ var LR1Engine = (function () {
     var g = [num(d.t4g1), num(d.t4g2), num(d.t4g3)], gm = (g[0] + g[1] + g[2]) / 3, ip = num(d.t4ip);
     r.t4 = { ip: ip, g: g, gm: gm, dgk: norm180(ip - gm) };
     // 5
-    var e5 = num(d.t5e), h5 = num(d.t5h), dk = num(d.t5dk);
-    r.t5 = { e: e5, h: h5, dk: dk, name: d.t5name, De: 2.08 * Math.sqrt(e5), Dh: isFinite(h5) ? 2.08 * Math.sqrt(h5) : NaN };
-    r.t5.Dp = isFinite(h5) ? r.t5.De + r.t5.Dh : NaN;
+    var e5 = num(d.t5e), dk = num(d.t5dk);
+    r.t5 = { e: e5, dk: dk, name: d.t5name, De: 2.08 * Math.sqrt(e5), D5: 2.08 * Math.sqrt(5) };
+    r.t5.dD = r.t5.De - r.t5.D5; r.t5.Dp = isFinite(dk) ? dk + r.t5.dD : NaN;
     r.t5.pos = lightPos(d.t5name);
     // 6
     var y = num(d.t6year) || 2008, d10 = num(d.t6d2010), chg = num(d.t6chg) || 0;
@@ -3401,14 +3401,15 @@ var LR1Engine = (function () {
       given: "φ = " + dm(t.phi, "lat", 0) + ", λ₁ = " + dm(t.l1, "lon", 0) + ", λ₂ = " + dm(t.l2, "lon", 0) + ", R₃ = 6371,1 км",
       lines: ["r = R₃·cosφ = 6371,1·cos" + f(Math.abs(t.phi), 0) + "° = " + f(t.r, 1) + " км",
         "α = |λ₂ − λ₁| = " + f(t.alpha, 1) + "°",
-        "l = 2π·r·α / (360°·1,852) = 2·3,1416·" + f(t.r, 1) + "·" + f(t.alpha, 1) + " / (360·1,852) = " + f(t.l, 1) + " миль",
-        "Проверка: l = α′·cosφ = " + f(t.alpha * 60, 0) + "·cos" + f(Math.abs(t.phi), 0) + "° = " + f(t.check, 1) + " миль"],
+        "l (миль) = 2·r·α° / (360°·1,852 км) — формула методички; в ней пропущен множитель π: длина окружности параллели 2π·r, поэтому",
+        "l = 2·π·r·α° / (360°·1,852) = 2·3,1416·" + f(t.r, 1) + "·" + f(t.alpha, 1) + " / (360·1,852) = " + f(t.l, 1) + " миль",
+        "Проверка (1′ дуги параллели ≈ cosφ мили): l = α′·cosφ = " + f(t.alpha * 60, 0) + "·cos" + f(Math.abs(t.phi), 0) + "° = " + f(t.check, 1) + " миль"],
       answer: "l = " + f(t.l, 1) + " миль" });
     t = r.t3;
     s.push({ no: 3, title: "Ширина просматриваемой полосы при визуальном поиске",
       given: "e = " + f(t.e, 0) + " м" + (t.h ? ", h объекта = " + f(t.h, 1) + " м" : ""),
       lines: [t.h ? "Д = 2,08·(√e + √h) = 2,08·(√" + f(t.e, 0) + " + √" + f(t.h, 1) + ") = " + f(t.D, 1) + " мили"
-                  : "Дальность видимого горизонта Д = 2,08·√e = 2,08·√" + f(t.e, 0) + " = " + f(t.D, 1) + " мили",
+                  : "Дальность видимого горизонта (как в ЛР 1, задача 11) Д = 2,08·√e = 2,08·√" + f(t.e, 0) + " = " + f(t.D, 1) + " мили",
         "Ширина полосы Шп = 2·Д = 2·" + f(t.D, 1) + " = " + f(t.W, 1) + " мили"],
       answer: "Шп = " + f(t.W, 1) + " мили" });
     t = r.t4;
@@ -3419,13 +3420,12 @@ var LR1Engine = (function () {
       answer: "ГКПср = " + deg(t.gm, 1) + ", ΔГКср = " + sgn(t.dgk, 1) });
     t = r.t5;
     s.push({ no: 5, title: "Дальность открытия (скрытия) огня маяка по карте 62028",
-      given: "Маяк: " + t.name + "; e = " + f(t.e, 0) + " м; h огня = " + (isFinite(t.h) ? f(t.h, 0) + " м" : "не указана") + (isFinite(t.dk) ? "; Дк = " + f(t.dk, 0) + " миль" : ""),
-      lines: ["Де = 2,08·√e = 2,08·√" + f(t.e, 0) + " = " + f(t.De, 1) + " мили",
-        isFinite(t.h) ? "Дh = 2,08·√h = 2,08·√" + f(t.h, 0) + " = " + f(t.Dh, 1) + " мили" : "Высоту огня h снимите с карты (подпись у маяка) и впишите во вводные данные",
-        isFinite(t.Dp) ? "Дп = Де + Дh = " + f(t.De, 1) + " + " + f(t.Dh, 1) + " = " + f(t.Dp, 1) + " мили" : "",
-        isFinite(t.Dp) && isFinite(t.dk) ? (t.Dp > t.dk ? "Дп > Дк: огонь откроется на дальности Дк = " + f(t.dk, 0) + " миль (ограничивает сила света)" : "Дп ≤ Дк: огонь откроется на географической дальности Дп = " + f(t.Dp, 1) + " мили") : ""
-      ].filter(Boolean),
-      answer: isFinite(t.Dp) ? "Дп = " + f(t.Dp, 1) + " мили" : "нужна высота огня h" });
+      given: "Маяк: " + t.name + "; e = " + f(t.e, 0) + " м; Дк = " + (isFinite(t.dk) ? f(t.dk, 0) + " " + App.plural(Math.round(t.dk), "миля", "мили", "миль") + " (с карты 62028)" : "снимите с карты"),
+      lines: ["Дальность видимости огня Дк, указанная на карте, рассчитана для высоты глаза наблюдателя 5 м (как в ЛР 1, задача 11):",
+        "Д₅ = 2,08·√5 = " + f(t.D5, 2) + " мили;  Де = 2,08·√e = 2,08·√" + f(t.e, 0) + " = " + f(t.De, 2) + " мили",
+        "ΔД = Де − Д₅ = " + f(t.De, 2) + " − " + f(t.D5, 2) + " = " + (t.dD >= 0 ? "+" : "−") + f(Math.abs(t.dD), 2) + " мили",
+        isFinite(t.Dp) ? "Дп = Дк + ΔД = " + f(t.dk, 0) + " " + (t.dD >= 0 ? "+ " : "− ") + f(Math.abs(t.dD), 2) + " = " + f(t.Dp, 1) + " мили" : "Дк снимите с карты 62028 (число с буквой М в подписи огня, напр. «БПр4с12М» → 12 миль) и впишите во вводные данные"],
+      answer: isFinite(t.Dp) ? "Дп = " + f(t.Dp, 1) + " мили" : "нужна Дк с карты" });
     t = r.t6;
     s.push({ no: 6, title: "Гирокомпасный курс по магнитному (район по карте 62028)",
       given: "Год плавания " + t.year + "; МК = " + deg(t.mk, 0) + "; район: " + t.reg + "; ΔГК = " + sgn(t.dgk, 0),
@@ -3637,7 +3637,7 @@ var LR1Engine = (function () {
   function load() {
     var s = App.store.get(KEY);
     S.data = s && s.variant ? Object.assign(variantData(s.variant), s) : variantData(1);
-    if (S.data.t5h === "" || S.data.t5h === null) S.data.t5h = lightPos(S.data.t5name).h;
+    if (S.data.t5dk === "" || S.data.t5dk === null || S.data.t5dk === undefined) S.data.t5dk = lightPos(S.data.t5name).dk;
   }
   function save() { App.store.set(KEY, S.data); }
   function fld(k, label, o) {
@@ -3653,7 +3653,7 @@ var LR1Engine = (function () {
       '<header class="wp-head"><p class="eyebrow">Навигация и лоция · Лабораторная работа №2</p><h1>Основы навигации (контрольная работа)</h1></header>' +
       '<div class="controls"><label class="fld" for="n-var" style="min-width:150px"><span>Вариант по табл. 2.1</span><select id="n-var">' + opts + "</select></label>" +
       '<div class="actions"><button type="button" class="primary" id="nDocx">Скачать отчёт Word</button><button type="button" id="nPng">Чертежи PNG</button></div></div>' +
-      '<p class="mode-hint">Данные варианта подставляются из таблицы 2.1 методички, любое поле можно исправить. Высота огня маяка в задаче 5 подставлена по японскому списку маяков — сверьте с подписью на карте.</p>' +
+      '<p class="mode-hint">Данные варианта подставляются из таблицы 2.1 методички, любое поле можно исправить. В задаче 5 дальность видимости огня Дк подставлена с фото карты 62028 — сверьте с подписью у маяка на карте (для Обаэ, «на севере о. Ики» и м. Кинсаки впишите её сами).</p>' +
       '<div class="tabs" role="tablist"><button type="button" role="tab" data-tab="input">Вводные данные</button><button type="button" role="tab" data-tab="result">Решение и чертежи</button><button type="button" role="tab" data-tab="preview">Предпросмотр</button></div>' +
       '<div id="nt-input" class="tab-body"></div><div id="nt-result" class="tab-body"></div><div id="nt-preview" class="tab-body"></div>';
     root.querySelector("#n-var").addEventListener("change", function (e) {
@@ -3686,7 +3686,7 @@ var LR1Engine = (function () {
       "</div></section>" +
       '<section class="blk"><h2>Задачи 5–6 (по карте 62028)</h2><div class="grid">' +
         fld("t5name", "5. Маяк", { wide: true }) + fld("t5e", "5. Высота глаза e", { num: true, unit: "м" }) +
-        fld("t5h", "5. Высота огня h (сверьте с картой)", { num: true, unit: "м", ph: "впишите" }) + fld("t5dk", "5. Дк с карты (необяз.)", { num: true, unit: "миль" }) +
+        fld("t5dk", "5. Дк — дальность видимости огня с карты (сверьте)", { num: true, unit: "миль", ph: "впишите" }) +
         fld("t6mk", "6. МК", { num: true, unit: "°" }) +
         '<label class="fld wide" for="n-t6reg"><span>6. Район</span><select id="n-t6reg" data-k="t6reg">' + regs.map(function (g) { return '<option' + (g === S.data.t6reg ? " selected" : "") + ">" + esc(g) + "</option>"; }).join("") + "</select></label>" +
         fld("t6dgk", "6. ΔГК", { num: true, unit: "°" }) + fld("t6year", "6. Год плавания", { num: true }) +
@@ -3714,7 +3714,7 @@ var LR1Engine = (function () {
     t.innerHTML =
       '<div class="tscroll"><table class="data"><thead><tr><th>№</th><th class="l">Задача</th><th class="l">Ответ</th></tr></thead><tbody>' +
       ss.map(function (s) { return "<tr><td>" + s.no + '</td><td class="l">' + esc(s.title) + '</td><td class="l"><b>' + esc(s.answer) + "</b></td></tr>"; }).join("") + "</tbody></table></div>" +
-      (isFinite(r.t5.Dp) ? "" : '<p class="note warn">Задача 5: впишите высоту огня маяка «' + esc(r.t5.name) + '» с карты (цифра в подписи у маяка, в метрах).</p>') +
+      (isFinite(r.t5.Dp) ? "" : '<p class="note warn">Задача 5: впишите дальность видимости огня Дк маяка «' + esc(r.t5.name) + '» с карты 62028 (число с буквой М в подписи огня, в милях).</p>') +
       '<h2>Карта 62028: задачи 5 и 6</h2><div class="plate"><canvas id="nvC" aria-label="Схема карты 62028"></canvas></div>' +
       '<h2>Чертёж к задаче 9</h2><div class="plate"><canvas id="nvL" aria-label="Чертёж локсодромии"></canvas></div>' +
       '<h2>Подробное решение</h2>' + ss.map(function (s) {
