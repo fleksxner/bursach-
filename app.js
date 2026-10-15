@@ -3831,7 +3831,7 @@ var LR1Engine = (function () {
   var L = window.NavLib, f = function (x, n) { return App.f(x, n).replace(/^-/, "−"); }, dm = L.dm, n360 = L.norm360, n180 = L.norm180, sgn = L.sgn;
   var R = Math.PI / 180;
 
-  /* [ [d, год(2 цифры), изм′, к E/W], [ИК,d], [ИК,МК,ΔМК,КУ], [МК,d,ΔГК], [ИПств,ОКПств,d], [ККгл,ККпут], [ГКК,ККгл,ΔГК], [ГКП,А], [φ1,λ1,φ2,λ2], [T1,ОЛ1,T2|ОЛ2,V,ΔЛ%], [Dк,e] ] */
+  /* [ [d, год(2 цифры), изм′, к E/W], [ИК,d], [ИК,МК,ΔМК,КУ], [МК,d,ΔГК], [ИП_{ств},ОКП_{ств},d], [КК_{гл},КК_{пут}], [ГКК,КК_{гл},ΔГК], [ГКП,А], [φ1,λ1,φ2,λ2], [T1,ОЛ1,T2|ОЛ2,V,ΔЛ%], [Dк,e] ] */
   var V = {
     1: [["9W", 82, 2, "W"], [192.8, "8E"], [137.6, 139.5, 5.2, "85 лб"], [0, "10W", 2], [5.4, 172.5, "9.5E"], [242, 239.5], [102, 92, -3.5], [320, "S138.5W"], ["82°15′S", "162°18′E", "64°45′S", "170°32′W"], ["21:37", 92.5, "04:29", 13.5, -7], [12, 35]],
     2: [["9.2W", 83, 3, "E"], [358.6, "1.4E"], [0.5, 358.7, 3.7, "120 пб"], [270, "4.5E", -1.5], [293.5, 100, "10E"], [12.5, 15], [180, 182, 1.5], [355, "S178W"], ["3°18′N", "105°14′W", "12°32′S", "5°14′E"], ["22:42", 72.8, 138.2, 13.5, -6], [12.5, 3]],
@@ -3936,10 +3936,10 @@ var LR1Engine = (function () {
 
     /* 1 */
     var dY = decl(d.t1d), yr = num(d.t1y), n = num(d.year) - yr, ch = num(d.t1c) * (/W|З/i.test(d.t1dir) ? -1 : 1), dd = ch * n / 60, d16 = dY + dd;
-    st.push({ no: 1, title: "Магнитное склонение на " + d.year + " год", given: "d" + yr + " = " + dStr(dY) + ", годовое изменение " + f(Math.abs(num(d.t1c)), 0) + "′ к " + (ch < 0 ? "W" : "E"),
+    st.push({ no: 1, title: "Магнитное склонение на " + d.year + " год", given: "d_{" + yr + "}" + " = " + dStr(dY) + ", годовое изменение " + f(Math.abs(num(d.t1c)), 0) + "′ к " + (ch < 0 ? "W" : "E"),
       lines: ["n = " + d.year + " − " + yr + " = " + n + " " + App.plural(n, "год", "года", "лет"), "Δd = " + sgn(ch / 60 * 60, 0).replace("°", "′") + " × " + n + " = " + (dd >= 0 ? "+" : "−") + f(Math.abs(ch * n), 0) + "′ = " + sgn(dd, 1),
-        "d" + d.year + " = d" + yr + " + Δd = " + (dY >= 0 ? "+" : "−") + f(Math.abs(dY), 1) + "° " + (dd >= 0 ? "+ " : "− ") + f(Math.abs(dd), 1) + "° = " + (d16 >= 0 ? "+" : "−") + f(Math.abs(d16), 1) + "°"],
-      answer: "d" + d.year + " = " + dStr(d16) + " (" + (d16 >= 0 ? "+" : "−") + f(Math.abs(d16), 1) + "°)" });
+        "d_{" + d.year + "}" + " = d_{" + yr + "}" + " + Δd = " + (dY >= 0 ? "+" : "−") + f(Math.abs(dY), 1) + "° " + (dd >= 0 ? "+ " : "− ") + f(Math.abs(dd), 1) + "° = " + (d16 >= 0 ? "+" : "−") + f(Math.abs(d16), 1) + "°"],
+      answer: "d_{" + d.year + "}" + " = " + dStr(d16) + " (" + (d16 >= 0 ? "+" : "−") + f(Math.abs(d16), 1) + "°)" });
 
     /* 2 */
     var ik2 = num(d.t2ik), d2 = decl(d.t2d), mk2 = n360(ik2 - d2), dv2 = devByMK(dev, mk2), kk2 = dv2.kk, dmk2 = d2 + dv2.d;
@@ -3958,7 +3958,7 @@ var LR1Engine = (function () {
       lines: ["d = ИК − МК = " + a3(ik3) + " − " + a3(mk3) + " = " + sgn(d3) + " (" + dStr(d3) + ")",
         "δ = ΔМК − d = " + sgn(dmk3) + " − (" + sgn(d3) + ") = " + sgn(del3),
         "КК = МК − δ = " + a3(mk3) + " − (" + sgn(del3) + ") = " + a3(kk3),
-        "ИП = ИК " + (ku.left ? "− КУл/б" : "+ КУпр/б") + " = " + a3(ik3) + (ku.left ? " − " : " + ") + f(ku.v, 1) + "° = " + a3(ip3),
+        "ИП = ИК " + (ku.left ? "− КУ_{л/б}" : "+ КУ_{пр/б}") + " = " + a3(ik3) + (ku.left ? " − " : " + ") + f(ku.v, 1) + "° = " + a3(ip3),
         "МП = ИП − d = " + a3(ip3) + " − (" + sgn(d3) + ") = " + a3(mp3),
         "КП = ИП − ΔМК = " + a3(ip3) + " − (" + sgn(dmk3) + ") = " + a3(kp3)],
       answer: "ИП = " + a3(ip3) + ", КП = " + a3(kp3) + ", МП = " + a3(mp3) + ", КК = " + a3(kk3) + ", d = " + dStr(d3) + ", δ = " + sgn(del3),
@@ -3972,28 +3972,28 @@ var LR1Engine = (function () {
 
     /* 5 */
     var ip5 = num(d.t5ip), okp5 = num(d.t5okp), d5 = decl(d.t5d), kp5 = n360(okp5 + 180), dmk5 = n180(ip5 - kp5), del5 = dmk5 - d5;
-    st.push({ no: 5, title: "Девиация главного магнитного компаса по пеленгу створа", given: "ИПств = " + a3(ip5) + ", ОКПств = " + a3(okp5) + ", d = " + dStr(d5), figs: ["f5"],
-      lines: ["КПств = ОКПств ± 180° = " + a3(okp5) + " ± 180° = " + a3(kp5),
-        "ΔМКгл = ИПств − КПств = " + a3(ip5) + " − " + a3(kp5) + " = " + sgn(dmk5),
-        "δгл = ΔМКгл − d = " + sgn(dmk5) + " − (" + sgn(d5) + ") = " + sgn(del5)],
-      answer: "δгл = " + sgn(del5) + ", ΔМКгл = " + sgn(dmk5), data: { ip: ip5, kp: kp5, d: d5, del: del5 } });
+    st.push({ no: 5, title: "Девиация главного магнитного компаса по пеленгу створа", given: "ИП_{ств} = " + a3(ip5) + ", ОКП_{ств} = " + a3(okp5) + ", d = " + dStr(d5), figs: ["f5"],
+      lines: ["КП_{ств} = ОКП_{ств} ± 180° = " + a3(okp5) + " ± 180° = " + a3(kp5),
+        "ΔМК_{гл} = ИП_{ств} − КП_{ств} = " + a3(ip5) + " − " + a3(kp5) + " = " + sgn(dmk5),
+        "δ_{гл} = ΔМК_{гл} − d = " + sgn(dmk5) + " − (" + sgn(d5) + ") = " + sgn(del5)],
+      answer: "δ_{гл} = " + sgn(del5) + ", ΔМК_{гл} = " + sgn(dmk5), data: { ip: ip5, kp: kp5, d: d5, del: del5 } });
 
     /* 6 */
     var kg6 = num(d.t6kg), kp6 = num(d.t6kp), dg6 = devAt(dev, kg6), mk6 = n360(kg6 + dg6), dp6 = n180(mk6 - kp6);
-    st.push({ no: 6, title: "Девиация путевого компаса по сличению", given: "ККгл = " + a3(kg6) + ", ККпут = " + a3(kp6),
-      lines: ["δгл по таблице девиации для ККгл " + a3(kg6) + ": δгл = " + sgn(dg6), "МК = ККгл + δгл = " + a3(kg6) + " + (" + sgn(dg6) + ") = " + a3(mk6),
-        "δпут = МК − ККпут = " + a3(mk6) + " − " + a3(kp6) + " = " + sgn(dp6)],
-      answer: "δгл = " + sgn(dg6) + ", δпут = " + sgn(dp6) });
+    st.push({ no: 6, title: "Девиация путевого компаса по сличению", given: "КК_{гл} = " + a3(kg6) + ", КК_{пут} = " + a3(kp6),
+      lines: ["δ_{гл} по таблице девиации для КК_{гл} " + a3(kg6) + ": δ_{гл} = " + sgn(dg6), "МК = КК_{гл} + δ_{гл} = " + a3(kg6) + " + (" + sgn(dg6) + ") = " + a3(mk6),
+        "δ_{пут} = МК − КК_{пут} = " + a3(mk6) + " − " + a3(kp6) + " = " + sgn(dp6)],
+      answer: "δ_{гл} = " + sgn(dg6) + ", δ_{пут} = " + sgn(dp6) });
 
     /* 7 */
     var g7 = num(d.t7gkk), k7 = num(d.t7kk), dg7 = num(d.t7dgk), ik7 = n360(g7 + dg7), dmk7 = n180(ik7 - k7);
-    st.push({ no: 7, title: "ΔМК главного магнитного компаса по сличению с гирокомпасом", given: "ГКК = " + a3(g7) + ", ККгл = " + a3(k7) + ", ΔГК = " + sgn(dg7),
-      lines: ["ИК = ГКК + ΔГК = " + a3(g7) + " + (" + sgn(dg7) + ") = " + a3(ik7), "ΔМКгл = ИК − ККгл = " + a3(ik7) + " − " + a3(k7) + " = " + sgn(dmk7)],
-      answer: "ΔМКгл = " + sgn(dmk7) });
+    st.push({ no: 7, title: "ΔМК главного магнитного компаса по сличению с гирокомпасом", given: "ГКК = " + a3(g7) + ", КК_{гл} = " + a3(k7) + ", ΔГК = " + sgn(dg7),
+      lines: ["ИК = ГКК + ΔГК = " + a3(g7) + " + (" + sgn(dg7) + ") = " + a3(ik7), "ΔМК_{гл} = ИК − КК_{гл} = " + a3(ik7) + " − " + a3(k7) + " = " + sgn(dmk7)],
+      answer: "ΔМК_{гл} = " + sgn(dmk7) });
 
     /* 8 */
     var g8 = num(d.t8gkp), a8 = azim(d.t8a), dg8 = n180(a8 - g8);
-    st.push({ no: 8, title: "ΔГК по азимуту светила", given: "ГКПсв = " + a3(g8) + ", Асв = " + d.t8a,
+    st.push({ no: 8, title: "ΔГК по азимуту светила", given: "ГКП_{св} = " + a3(g8) + ", А_{св} = " + d.t8a,
       lines: ["Перевод азимута в круговой счёт: А = " + d.t8a + " = " + a3(a8) + " (ИП светила от Nи)", "ΔГК = ИП − ГКП = " + a3(a8) + " − " + a3(g8) + " = " + sgn(dg8),
         "Направления: от Nи — " + a3(a8) + "; от Nг — " + a3(g8)],
       answer: "ΔГК = " + sgn(dg8) });
@@ -4009,19 +4009,19 @@ var LR1Engine = (function () {
 
     /* 10 */
     var T1 = hm(d.t10t1), ol1 = num(d.t10ol1), v10 = num(d.t10v), dl10 = num(d.t10dl), K = 1 + dl10 / 100, lines10 = [], ans10;
-    lines10.push("Kл = 1 + ΔЛ/100 = 1 + (" + f(dl10, 1).replace("-", "−") + ")/100 = " + f(K, 3));
+    lines10.push("K_{л} = 1 + ΔЛ/100 = 1 + (" + f(dl10, 1).replace("-", "−") + ")/100 = " + f(K, 3));
     if (isTime(d.t10x)) {
       var T2 = hm(d.t10x), t = T2 - T1; if (t <= 0) t += 24;
       var S10 = v10 * t, rol = S10 / K, ol2 = ol1 + rol;
       lines10.push("t = T₂ − T₁ = " + hmStr(T2) + " − " + hmStr(T1) + " = " + hmStr(t) + " = " + f(t, 3) + " ч");
       lines10.push("S = V · t = " + f(v10, 1) + " · " + f(t, 3) + " = " + f(S10, 2) + " мили");
-      lines10.push("РОЛ = S / Kл = " + f(S10, 2) + " / " + f(K, 3) + " = " + f(rol, 1));
+      lines10.push("РОЛ = S / K_{л} = " + f(S10, 2) + " / " + f(K, 3) + " = " + f(rol, 1));
       lines10.push("ОЛ₂ = ОЛ₁ + РОЛ = " + f(ol1, 1) + " + " + f(rol, 1) + " = " + f(ol2, 1));
       ans10 = "ОЛ₂ = " + f(ol2, 1) + " (S = " + f(S10, 1) + " мили)";
     } else {
       var o2 = num(d.t10x), rol2 = o2 - ol1, S2 = rol2 * K, t2 = S2 / v10, TT = T1 + t2;
       lines10.push("РОЛ = ОЛ₂ − ОЛ₁ = " + f(o2, 1) + " − " + f(ol1, 1) + " = " + f(rol2, 1));
-      lines10.push("S = РОЛ · Kл = " + f(rol2, 1) + " · " + f(K, 3) + " = " + f(S2, 2) + " мили");
+      lines10.push("S = РОЛ · K_{л} = " + f(rol2, 1) + " · " + f(K, 3) + " = " + f(S2, 2) + " мили");
       lines10.push("t = S / V = " + f(S2, 2) + " / " + f(v10, 1) + " = " + f(t2, 3) + " ч = " + hmStr(t2));
       lines10.push("T₂ = T₁ + t = " + hmStr(T1) + " + " + hmStr(t2) + " = " + hmStr(TT));
       ans10 = "T₂ = " + hmStr(TT) + " (S = " + f(S2, 1) + " мили)";
@@ -4038,74 +4038,225 @@ var LR1Engine = (function () {
     return { steps: st, warn: warn };
   }
 
-  /* ---------- чертежи направлений ---------- */
-  function dirFig(canvas, LK, title, rays, arcs) {
-    var W = 1000, H = 1000; canvas.width = W; canvas.height = H;
-    var c = canvas.getContext("2d"), cx = W / 2, cy = H / 2 + 60, r = 360, INK = LK.ink || "#1d3557", FONT = LK.font, PAL = LK.palette || ["#1d3557", "#c1121f", "#2a9d8f", "#e9c46a"];
-    c.fillStyle = "#fff"; c.fillRect(0, 0, W, H);
-    c.strokeStyle = "#ccc"; c.lineWidth = 2; c.beginPath(); c.arc(cx, cy, r, 0, 2 * Math.PI); c.stroke();
-    c.fillStyle = "#111"; c.font = "600 30px " + FONT; c.textAlign = "center"; c.fillText(title, W / 2, 44);
-    function pt(a, rr) { return [cx + rr * Math.sin(a * R), cy - rr * Math.cos(a * R)]; }
-    (arcs || []).forEach(function (ar, i) {
-      var a0 = ar[0], a1 = ar[1], rr = 120 + i * 45, d = n180(a1 - a0);
-      c.strokeStyle = PAL[(i + 1) % PAL.length]; c.lineWidth = 3; c.beginPath();
-      c.arc(cx, cy, rr, (a0 - 90) * R, (a0 + d - 90) * R, d < 0); c.stroke();
-      var m = pt(a0 + d / 2, rr + 22); c.fillStyle = c.strokeStyle; c.font = "500 24px " + FONT; c.fillText(ar[2], m[0], m[1]);
+  /* ---------- чертежи (задачи 2, 3, 4, 5, 9) — ч/б, в стиле рисунков учебника: Times, индексы, штрихи вместо цвета ---------- */
+  var FF = '"Times New Roman", Times, serif';
+  function cvI(cv, W, H, cm) { cv.width = W; cv.height = H; cv._cm = cm; var c = cv.getContext("2d"); c.fillStyle = "#fff"; c.fillRect(0, 0, W, H); c.lineCap = "round"; c.lineJoin = "round"; return c; }
+  /* текст с нижними индексами: "N_{и}", "КП_{ств}" */
+  function tx(c, s, x, y, o) {
+    o = o || {}; var size = o.size || 30, st = (o.italic ? "italic " : "") + (o.bold ? "700 " : ""), ss = Math.round(size * 0.66);
+    var seg = String(s).split(/(_\{[^}]*\})/).filter(Boolean).map(function (p) { return p.slice(0, 2) === "_{" ? { t: p.slice(2, -1), sub: 1 } : { t: p }; });
+    var w = 0; seg.forEach(function (g) { c.font = st + (g.sub ? ss : size) + "px " + FF; g.w = c.measureText(g.t).width + (g.sub ? 1 : 0); w += g.w; });
+    var al = o.align || "center", x0 = al === "center" ? x - w / 2 : al === "right" ? x - w : x;
+    if (o.halo !== false) { c.fillStyle = "rgba(255,255,255,0.88)"; c.fillRect(x0 - 3, y - size * 0.62, w + 6, size * 1.26); }
+    c.fillStyle = o.color || "#111"; c.textAlign = "left"; c.textBaseline = "middle";
+    seg.forEach(function (g) { c.font = st + (g.sub ? ss : size) + "px " + FF; c.fillText(g.t, x0 + (g.sub ? 1 : 0), y + (g.sub ? size * 0.3 : 0)); x0 += g.w; });
+    return w;
+  }
+  var DASH = { solid: [], dash: [18, 10], dot: [3, 9], dashdot: [20, 8, 3, 8], fine: [10, 8] };
+  function line(c, x1, y1, x2, y2, w, st, col) { c.strokeStyle = col || "#111"; c.lineWidth = w || 2; c.setLineDash(DASH[st] || st || []); c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke(); c.setLineDash([]); }
+  function head(c, x, y, a, sz, col) { c.fillStyle = col || "#111"; c.beginPath(); c.moveTo(x, y); c.lineTo(x - sz * Math.cos(a - 0.33), y - sz * Math.sin(a - 0.33)); c.lineTo(x - sz * Math.cos(a + 0.33), y - sz * Math.sin(a + 0.33)); c.closePath(); c.fill(); }
+  function fmtA(v) { return f(n360(v), 1) + "°"; }
+  function fmtS(v) { return f(Math.abs(v), 1) + "°" + (Math.abs(v) < 1e-9 ? "" : v < 0 ? "W" : "E"); }
+  function fmtD(v) { return (v > 1e-9 ? "+" : v < -1e-9 ? "−" : "") + f(Math.abs(v), 1) + "°"; }
+
+  /* размещение подписей без наложений: пробуем варианты позиций, берём первую свободную */
+  function placer(c) {
+    var boxes = [];
+    function box(s, x, y, o) { var w = tx(c, s, -9999, -9999, Object.assign({}, o, { halo: false })), h = (o.size || 30) * 1.15, al = o.align || "center", x0 = al === "center" ? x - w / 2 : al === "right" ? x - w : x; return [x0 - 4, y - h / 2, x0 + w + 4, y + h / 2]; }
+    function hit(b) { return boxes.some(function (q) { return b[0] < q[2] && b[2] > q[0] && b[1] < q[3] && b[3] > q[1]; }); }
+    return {
+      block: function (x0, y0, x1, y1) { boxes.push([x0, y0, x1, y1]); },
+      put: function (s, cands, o) {
+        o = o || {}; var pick = null;
+        for (var i = 0; i < cands.length && !pick; i++) { var b = box(s, cands[i][0], cands[i][1], Object.assign({}, o, { align: cands[i][2] || o.align })); if (!hit(b)) pick = { k: cands[i], b: b }; }
+        if (!pick) pick = { k: cands[0], b: box(s, cands[0][0], cands[0][1], Object.assign({}, o, { align: cands[0][2] || o.align })) };
+        boxes.push(pick.b);
+        if (pick.k[3]) line(c, pick.k[3][0], pick.k[3][1], (pick.b[0] + pick.b[2]) / 2 < pick.k[3][0] ? pick.b[2] - 2 : pick.b[0] + 2, (pick.b[1] + pick.b[3]) / 2, 1.1, [], "#555");
+        tx(c, s, pick.k[0], pick.k[1], Object.assign({}, o, { align: pick.k[2] || o.align }));
+        return pick.b;
+      }
+    };
+  }
+  function alignOf(a) { var s = Math.sin(a * R); return s > 0.3 ? "left" : s < -0.3 ? "right" : "center"; }
+
+  /* Круговая схема направлений. o = { mer:[{a, lab, st}], vec:[{a, lab, len, bear, mark}], arcs:[{a0, a1, r, lab, st, signed}] (по часовой от a0),
+     small:[{a0, a1, lab}] (малые углы: d, δ, ΔГК…), ship: курс, extra(c, P, cx, cy, L, pl) } */
+  function dirFig(cv, o) {
+    var W = 1000, H = 1000, c = cvI(cv, W, H, 11.5), cx = 500, cy = 530, L = 370, pl = placer(c);
+    function P(a, r) { return [cx + r * Math.sin(a * R), cy - r * Math.cos(a * R)]; }
+    /* картушка: окружность с рисками через 10° */
+    c.strokeStyle = "#bbb"; c.lineWidth = 1.4; c.beginPath(); c.arc(cx, cy, L * 0.92, 0, 2 * Math.PI); c.stroke();
+    for (var k = 0; k < 360; k += 10) { var p1 = P(k, L * 0.92), p2 = P(k, L * 0.92 - (k % 90 ? 9 : 18)); line(c, p1[0], p1[1], p2[0], p2[1], k % 90 ? 1.2 : 2, [], "#999"); }
+    /* меридианы */
+    var labs = [];
+    o.mer.forEach(function (m) { var p = P(m.a, L); line(c, cx, cy, p[0], p[1], m.st === "solid" ? 3.2 : 2.4, m.st); head(c, p[0], p[1], (m.a - 90) * R, m.st === "solid" ? 22 : 17);
+      var q = P(m.a, L + 36); labs.push({ x: q[0], y: q[1], t: m.lab, w: tx(c, m.lab, -9999, -9999, { size: 32, italic: true, halo: false }) }); });
+    labs.sort(function (a, b) { return a.x - b.x; });
+    for (var it = 0; it < 8; it++) for (var i = 1; i < labs.length; i++) { var need = (labs[i].w + labs[i - 1].w) / 2 + 16, gap = need - (labs[i].x - labs[i - 1].x); if (gap > 0 && Math.abs(labs[i].y - labs[i - 1].y) < 40) { labs[i - 1].x -= gap / 2; labs[i].x += gap / 2; } }
+    labs.forEach(function (l) { pl.put(l.t, [[l.x, l.y]], { size: 32, italic: true }); });
+    [[90, "90°"], [180, "180°"], [270, "270°"]].forEach(function (q) { var p = P(q[0], L * 0.92 + 28); pl.put(q[1], [[p[0], p[1]]], { size: 22, color: "#777" }); });
+    if (o.title) pl.put(o.title, [[30, 34, "left"]], { size: 26, halo: false });
+    if (o.legend) o.legend.forEach(function (l, j) { var y = H - 24 - (o.legend.length - 1 - j) * 32; line(c, 26, y, 86, y, l[1] === "solid" ? 3 : 2.4, l[1]); pl.put(l[0], [[98, y, "left"]], { size: 23, halo: false }); });
+    /* векторы — рисуем линии, подписи потом */
+    var vlab = [];
+    (o.vec || []).forEach(function (v) {
+      var len = v.len || L * 0.8, p = P(v.a, len);
+      line(c, cx, cy, p[0], p[1], v.bear ? 2.4 : 4, v.bear ? "dash" : "solid"); head(c, p[0], p[1], (v.a - 90) * R, v.bear ? 20 : 26);
+      if (v.mark) { var q = P(v.a, len + 26); c.fillStyle = "#fff"; c.strokeStyle = "#111"; c.lineWidth = 2.4; c.beginPath(); c.moveTo(q[0], q[1] - 20); c.lineTo(q[0] - 13, q[1] + 12); c.lineTo(q[0] + 13, q[1] + 12); c.closePath(); c.fill(); c.stroke(); pl.block(q[0] - 15, q[1] - 22, q[0] + 15, q[1] + 14); }
+      vlab.push({ v: v, len: len });
     });
-    var mi = 0;
-    rays.forEach(function (ry) {
-      var lr = ry[3] ? r * 0.85 + 34 : r + 30 + (mi++) * 30;
-      var p = pt(ry[0], ry[3] ? r * 0.85 : r);
-      c.strokeStyle = ry[2] || INK; c.lineWidth = ry[3] ? 5 : 3; c.setLineDash(ry[4] ? [14, 10] : []);
-      c.beginPath(); c.moveTo(cx, cy); c.lineTo(p[0], p[1]); c.stroke(); c.setLineDash([]);
-      if (ry[3]) { var h = pt(ry[0], r * 0.85 - 30), aL = pt(ry[0] - 4, r * 0.85 - 40), aR = pt(ry[0] + 4, r * 0.85 - 40); c.fillStyle = ry[2] || INK; c.beginPath(); c.moveTo(p[0], p[1]); c.lineTo(aL[0], aL[1]); c.lineTo(aR[0], aR[1]); c.fill(); void h; }
-      var q = pt(ry[0], lr); c.fillStyle = ry[2] || INK; c.font = "600 26px " + FONT; c.fillText(ry[1], q[0], q[1] + 8);
+    if (o.extra) o.extra(c, P, cx, cy, L, pl);
+    /* малые углы между меридианами */
+    (o.small || []).forEach(function (s, i) {
+      var r = L * (0.84 - i * 0.12), d = n180(s.a1 - s.a0);
+      if (Math.abs(d) > 0.05) { c.strokeStyle = "#111"; c.lineWidth = 2; c.beginPath(); c.arc(cx, cy, r, (s.a0 - 90) * R, (s.a0 + d - 90) * R, d < 0); c.stroke();
+        var pe = P(s.a0 + d, r); head(c, pe[0], pe[1], (s.a0 + d - 90) * R + (d < 0 ? -Math.PI / 2 : Math.PI / 2), 13); }
+      var mid = s.a0 + d / 2, pm = P(mid, r), left = n180(mid) < 0, cands = [];
+      for (var dy = 0; dy <= 160; dy += 36) [left, !left].forEach(function (lf) { cands.push([pm[0] + (lf ? -34 : 34), pm[1] + dy, lf ? "right" : "left", pm]); });
+      pl.put(s.lab, cands, { size: 26 });
     });
-    c.fillStyle = "#111"; c.beginPath(); c.arc(cx, cy, 6, 0, 2 * Math.PI); c.fill();
+    /* подписи векторов: у конца, иначе сбоку от линии */
+    vlab.forEach(function (q) {
+      var v = q.v, cands = [], a = v.a, e = P(a, q.len + (v.mark ? 64 : 42));
+      cands.push([e[0], e[1], alignOf(a)]);
+      [0.62, 0.45, 0.8, 0.3].forEach(function (t) { var m = P(a, q.len * t), nx = Math.cos(a * R), ny = Math.sin(a * R);
+        cands.push([m[0] + nx * 26, m[1] + ny * 26, nx >= 0 ? "left" : "right"]); cands.push([m[0] - nx * 26, m[1] - ny * 26, nx >= 0 ? "right" : "left"]); });
+      pl.put(v.lab, cands, { size: 30, bold: !v.bear });
+    });
+    /* дуги отсчёта курсов/пеленгов (по часовой стрелке) */
+    (o.arcs || []).forEach(function (a) {
+      var sw = a.signed ? n180(a.a1 - a.a0) : n360(a.a1 - a.a0); if (Math.abs(sw) < 0.05) return;
+      c.strokeStyle = "#111"; c.lineWidth = 1.8; c.setLineDash(a.st ? DASH[a.st] : []); c.beginPath(); c.arc(cx, cy, a.r, (a.a0 - 90) * R, (a.a0 + sw - 90) * R, sw < 0); c.stroke(); c.setLineDash([]);
+      var pe = P(a.a0 + sw, a.r); head(c, pe[0], pe[1], (a.a0 + sw - 90) * R + (sw < 0 ? -Math.PI / 2 : Math.PI / 2), 15);
+      var cands = []; [0.5, 0.4, 0.6, 0.3, 0.7, 0.22, 0.78, 0.15, 0.85].forEach(function (t) { var m = a.a0 + sw * t, q = P(m, a.r + 26), qi = P(m, a.r - 26);
+        cands.push([q[0], q[1], alignOf(m)]); cands.push([qi[0], qi[1], alignOf(m + 180)]); });
+      pl.put(a.lab, cands, { size: 26 });
+    });
+    /* судно в центре по курсу */
+    if (o.ship !== undefined) {
+      var hull = [[0, -44], [14, -20], [14, 32], [-14, 32], [-14, -20]], an = o.ship * R;
+      c.fillStyle = "#fff"; c.strokeStyle = "#111"; c.lineWidth = 2.6; c.beginPath();
+      hull.forEach(function (h, j) { var X = cx + h[0] * Math.cos(an) - h[1] * Math.sin(an), Y = cy + h[0] * Math.sin(an) + h[1] * Math.cos(an); if (j) c.lineTo(X, Y); else c.moveTo(X, Y); });
+      c.closePath(); c.fill(); c.stroke();
+    }
+    c.fillStyle = "#111"; c.beginPath(); c.arc(cx, cy, 5, 0, 2 * Math.PI); c.fill();
+  }
+  function merN(d, del, gk) {           // набор меридианов: Nи, Nм, Nк (или Nг)
+    var m = [{ a: 0, lab: "N_{и}", st: "solid" }], lg = [["истинный меридиан N_{и}", "solid"]];
+    if (d !== undefined) { m.push({ a: d, lab: Math.abs(del || 0) < 0.05 && del !== undefined ? "N_{м} ≡ N_{к}" : "N_{м}", st: "dash" }); lg.push(["магнитный меридиан N_{м}", "dash"]); }
+    if (del !== undefined && Math.abs(del) >= 0.05) { m.push({ a: d + del, lab: "N_{к}", st: "dashdot" }); lg.push(["компасный меридиан N_{к}", "dashdot"]); }
+    if (gk !== undefined) { m.push({ a: gk, lab: Math.abs(gk) < 0.05 ? "N_{г} ≡ N_{и}" : "N_{г}", st: "dot" }); lg.push(["гирокомпасный меридиан N_{г}", "dot"]); }
+    return { m: m, lg: lg };
   }
   function stepData(res, no) { var s = res.steps.filter(function (x) { return x.no === no; })[0]; return s && s.data; }
   var figs = {
-    f2: { caption: "Задача 2: ИК, МК, КК и поправки d, δ", draw: function (cv, LK, d, res) { var x = stepData(res, 2);
-      dirFig(cv, LK, "Задача 2", [[0, "Nи", "#111"], [-x.d, "Nм", "#2a9d8f", false, true], [-x.d - x.del, "Nк", "#c1121f", false, true], [x.ik, "ИК " + a3(x.ik), LK.ink, true]],
-        [[-x.d, 0, "d " + sgn(x.d)], [-x.d - x.del, -x.d, "δ " + sgn(x.del)]]); } },
-    f3: { caption: "Задача 3: курсы и пеленги", draw: function (cv, LK, d, res) { var x = stepData(res, 3);
-      dirFig(cv, LK, "Задача 3", [[0, "Nи", "#111"], [-x.d, "Nм", "#2a9d8f", false, true], [-x.d - x.del, "Nк", "#c1121f", false, true], [x.ik, "ИК " + a3(x.ik), LK.ink, true], [x.ip, "ИП " + a3(x.ip), "#e76f51", true, true]],
-        [[-x.d, 0, "d"], [-x.d - x.del, -x.d, "δ"], [x.ik, x.ip, "КУ"]]); } },
-    f4: { caption: "Задача 4: МК, ИК и ГКК", draw: function (cv, LK, d, res) { var x = stepData(res, 4);
-      dirFig(cv, LK, "Задача 4", [[0, "Nи", "#111"], [-x.d, "Nм", "#2a9d8f", false, true], [-x.dgk, "Nг", "#c1121f", false, true], [x.ik, "ИК " + a3(x.ik), LK.ink, true]],
-        [[-x.d, 0, "d " + sgn(x.d)], [-x.dgk, 0, "ΔГК " + sgn(x.dgk)]]); } },
-    f5: { caption: "Задача 5: пеленг створа и девиация", draw: function (cv, LK, d, res) { var x = stepData(res, 5);
-      dirFig(cv, LK, "Задача 5", [[0, "Nи", "#111"], [-x.d, "Nм", "#2a9d8f", false, true], [-x.d - x.del, "Nк", "#c1121f", false, true], [x.ip, "ИПств " + a3(x.ip), LK.ink, true], [x.ip + 180, "ОКП", "#999", false, true]],
-        [[-x.d, 0, "d"], [-x.d - x.del, -x.d, "δ"]]); } },
-    f9: { caption: "Задача 9: точки M₁, M₂, разность широт и долгот на земном шаре", draw: function (cv, LK, d, res) {
-      var x = stepData(res, 9), W = 1000, H = 1000; cv.width = W; cv.height = H;
-      var c = cv.getContext("2d"), cx = W / 2, cy = H / 2 + 10, r = 400, FONT = LK.font, INK = LK.ink || "#1d3557";
-      c.fillStyle = "#fff"; c.fillRect(0, 0, W, H);
-      var lc = x.l1 + n180(x.l2 - x.l1) / 2;           // смотрим на шар над серединой между точками
-      var f0 = Math.max(-40, Math.min(40, (x.p1 + x.p2) / 2)) * R, sf = Math.sin(f0), cf = Math.cos(f0);
-      function P(ph, la) { var dl = n180(la - lc) * R, p = ph * R;
+    f2: { caption: "Задача 2. Перевод направлений из истинных в магнитные и компасные", draw: function (cv, LK, d, res) { var x = stepData(res, 2), M = merN(x.d, x.del);
+      dirFig(cv, { mer: M.m, legend: M.lg, ship: x.ik, vec: [{ a: x.ik, lab: "ИК" }],
+        arcs: [{ a0: 0, a1: x.ik, r: 110, lab: "ИК = " + fmtA(x.ik) }, { a0: x.d, a1: x.ik, r: 165, lab: "МК = " + fmtA(x.mk), st: "fine" }, { a0: x.d + x.del, a1: x.ik, r: 220, lab: "КК = " + fmtA(x.kk), st: "fine" }],
+        small: [{ a0: 0, a1: x.d, lab: "d = " + fmtS(x.d) }, { a0: x.d, a1: x.d + x.del, lab: "δ = " + fmtD(x.del) }, { a0: 0, a1: x.d + x.del, lab: "ΔМК = " + fmtD(x.d + x.del) }] }); } },
+    f3: { caption: "Задача 3. Определение направлений с использованием магнитного компаса", draw: function (cv, LK, d, res) { var x = stepData(res, 3), M = merN(x.d, x.del), ku = n180(x.ip - x.ik);
+      dirFig(cv, { mer: M.m, legend: M.lg, ship: x.ik, vec: [{ a: x.ik, lab: "ИК" }, { a: x.ip, lab: "ИП", bear: true, mark: true, len: 300 }],
+        arcs: [{ a0: 0, a1: x.ik, r: 105, lab: "ИК = " + fmtA(x.ik) }, { a0: 0, a1: x.ip, r: 160, lab: "ИП = " + fmtA(x.ip), st: "fine" },
+          { a0: x.ik, a1: x.ip, r: 225, signed: true, lab: "КУ = " + f(Math.abs(ku), 1) + "° " + (ku < 0 ? "л/б" : "пр/б") }],
+        small: [{ a0: 0, a1: x.d, lab: "d = " + fmtS(x.d) }, { a0: x.d, a1: x.d + x.del, lab: "δ = " + fmtD(x.del) }, { a0: 0, a1: x.d + x.del, lab: "ΔМК = " + fmtD(x.d + x.del) }] }); } },
+    f4: { caption: "Задача 4. Маневрирование на полигоне: МК, ИК и ГКК", draw: function (cv, LK, d, res) { var x = stepData(res, 4), M = merN(x.d, undefined, x.dgk);
+      dirFig(cv, { mer: M.m, legend: M.lg, ship: x.ik, vec: [{ a: x.ik, lab: "ИК" }],
+        arcs: [{ a0: 0, a1: x.ik, r: 110, lab: "ИК = " + fmtA(x.ik) }, { a0: x.d, a1: x.ik, r: 165, lab: "МК = " + fmtA(x.mk), st: "fine" }, { a0: x.dgk, a1: x.ik, r: 220, lab: "ГКК = " + fmtA(x.gkk), st: "fine" }],
+        small: [{ a0: 0, a1: x.d, lab: "d = " + fmtS(x.d) }, { a0: 0, a1: x.dgk, lab: "ΔГК = " + fmtD(x.dgk) }] }); } },
+    f5: { caption: "Задача 5. Девиация главного магнитного компаса по пеленгу створа", draw: function (cv, LK, d, res) { var x = stepData(res, 5), M = merN(x.d, x.del);
+      M.lg.push(["линия створа", "fine"]);
+      dirFig(cv, { mer: M.m, legend: M.lg, vec: [{ a: x.ip, lab: "ИП_{ств}", bear: true, len: 230 }],
+        arcs: [{ a0: 0, a1: x.ip, r: 105, lab: "ИП_{ств} = " + fmtA(x.ip) }, { a0: x.d + x.del, a1: x.ip, r: 160, lab: "КП_{ств} = " + fmtA(x.kp), st: "fine" },
+          { a0: x.d + x.del, a1: x.ip + 180, r: 120, lab: "ОКП_{ств} = " + fmtA(x.kp + 180), st: "dot" }],
+        small: [{ a0: 0, a1: x.d, lab: "d = " + fmtS(x.d) }, { a0: x.d, a1: x.d + x.del, lab: "δ_{гл} = " + fmtD(x.del) }, { a0: 0, a1: x.d + x.del, lab: "ΔМК_{гл} = " + fmtD(x.d + x.del) }],
+        extra: function (c, P, cx, cy, L, pl) {
+          var a = P(x.ip + 180, L * 0.55), b = P(x.ip, L * 0.95); line(c, a[0], a[1], b[0], b[1], 1.6, "fine", "#444");
+          [[L * 0.74, 14, 40], [L * 0.9, 18, 54]].forEach(function (s, j) {            // передний и задний створные знаки
+            var q = P(x.ip, s[0]), u = x.ip * R, nx = Math.cos(u), ny = Math.sin(u);
+            c.fillStyle = "#fff"; c.strokeStyle = "#111"; c.lineWidth = 2.4; c.beginPath();
+            c.moveTo(q[0] - nx * s[1], q[1] - ny * s[1]); c.lineTo(q[0] + nx * s[1], q[1] + ny * s[1]); c.lineTo(q[0] + Math.sin(u) * s[2] * 0.6, q[1] - Math.cos(u) * s[2] * 0.6); c.closePath(); c.fill(); c.stroke();
+            pl.block(q[0] - 24, q[1] - 30, q[0] + 24, q[1] + 24);
+            if (j) { var t = P(x.ip, s[0] + 52), t2 = P(x.ip, s[0] * 0.8); pl.put("створ", [[t[0], t[1], alignOf(x.ip)], [t2[0] + 30, t2[1], "left"], [t2[0] - 30, t2[1], "right"]], { size: 24, italic: true }); }
+          });
+        } }); } },
+    f9: { caption: "Задача 9. Чертёж земного шара: координаты точек M₁, M₂, разность широт и разность долгот", draw: function (cv, LK, d, res) {
+      var x = stepData(res, 9), W = 1000, H = 1000, c = cvI(cv, W, H, 12.5), cx = 500, cy = 505, r = 375;
+      var dL = n180(x.l2 - x.l1), lc = x.l1 + dL / 2, half = Math.abs(dL) / 2;
+      /* меридианы 0° и 180° образуют один большой круг — разворачиваем шар, чтобы он не сливался с осью */
+      var room = Math.max(0, 82 - half), g0 = n180(lc), g1 = n180(lc - 180);
+      if (Math.abs(g0) < 28) lc += (g0 >= 0 ? 1 : -1) * Math.min(28 - Math.abs(g0), room); else if (Math.abs(g1) < 28) lc += (g1 >= 0 ? 1 : -1) * Math.min(28 - Math.abs(g1), room);
+      var pm = (x.p1 + x.p2) / 2, f0 = (pm >= 0 ? 1 : -1) * Math.max(20, Math.min(45, Math.abs(pm) * 0.6)) * R, sf = Math.sin(f0), cf = Math.cos(f0), pl = placer(c);
+      function Q(ph, la) { var dl = n180(la - lc) * R, p = ph * R;
         return { x: cx + r * Math.cos(p) * Math.sin(dl), y: cy - r * (cf * Math.sin(p) - sf * Math.cos(p) * Math.cos(dl)), vis: sf * Math.sin(p) + cf * Math.cos(p) * Math.cos(dl) >= -1e-6 }; }
-      function curve(fn, a, b, stp) {
+      function curve(fn, a, b, n, w, st, hideBack) {
         var prev = null;
-        for (var t = a; t <= b + 1e-9; t += stp) { var q = fn(t); if (prev) { c.save(); if (!(q.vis && prev.vis)) { c.setLineDash([8, 8]); c.globalAlpha = 0.45; } c.beginPath(); c.moveTo(prev.x, prev.y); c.lineTo(q.x, q.y); c.stroke(); c.restore(); } prev = q; }
+        for (var i = 0; i <= n; i++) { var q = fn(a + (b - a) * i / n);
+          if (prev) { var vis = q.vis && prev.vis; if (vis || !hideBack) { c.strokeStyle = vis ? "#111" : "#999"; c.lineWidth = vis ? w : Math.max(1, w * 0.55); c.setLineDash(vis ? (DASH[st] || []) : [7, 8]); c.beginPath(); c.moveTo(prev.x, prev.y); c.lineTo(q.x, q.y); c.stroke(); } }
+          prev = q; }
+        c.setLineDash([]);
       }
-      c.strokeStyle = "#333"; c.lineWidth = 3; c.beginPath(); c.arc(cx, cy, r, 0, 2 * Math.PI); c.stroke();
-      c.strokeStyle = "#ddd"; c.lineWidth = 1.5;
-      for (var la = -180; la < 180; la += 30) curve(function (t) { return P(t, la); }, -90, 90, 2);
-      for (var ph = -60; ph <= 60; ph += 30) curve(function (t) { return P(ph, t); }, -180, 180, 2);
-      c.strokeStyle = "#888"; c.lineWidth = 2.5; curve(function (t) { return P(0, t); }, -180, 180, 1);
-      [[0, "0°"], [180, "180°"]].forEach(function (m) { c.strokeStyle = m[0] ? "#c1121f" : "#2a9d8f"; c.lineWidth = 4; curve(function (t) { return P(t, m[0]); }, -90, 90, 1);
-        var q = P(f0 > 0 ? -40 : 40, m[0]); c.fillStyle = c.strokeStyle; c.font = "600 24px " + FONT; c.textAlign = q.x < cx ? "left" : "right"; c.fillText("меридиан " + m[1], q.x + (q.x < cx ? 14 : -14), q.y); });
-      c.strokeStyle = "#e76f51"; c.lineWidth = 6; curve(function (t) { return P(x.p1 + (x.p2 - x.p1) * t, x.l1); }, 0, 1, 0.02);
-      c.strokeStyle = "#2a9d8f"; c.lineWidth = 6; var dL = n180(x.l2 - x.l1); curve(function (t) { return P(x.p2, x.l1 + dL * t); }, 0, 1, 0.02);
-      [[x.p1, x.l1, "M₁"], [x.p2, x.l2, "M₂"]].forEach(function (m) { var q = P(m[0], m[1]); c.fillStyle = q.vis ? INK : "#888"; c.beginPath(); c.arc(q.x, q.y, 10, 0, 2 * Math.PI); c.fill(); c.font = "700 32px " + FONT; c.textAlign = "left"; c.fillText(m[2], q.x + 14, q.y - 12); });
-      var mA = P((x.p1 + x.p2) / 2, x.l1), mB = P(x.p2, x.l1 + dL / 2);
-      c.font = "600 26px " + FONT; c.fillStyle = "#e76f51"; c.textAlign = "right"; c.fillText("РШ", mA.x - 14, mA.y);
-      c.fillStyle = "#2a9d8f"; c.textAlign = "center"; c.fillText("РД", mB.x, mB.y + (x.p2 >= 0 ? -16 : 34));
-      c.fillStyle = "#111"; c.font = "600 26px " + FONT; var pn = P(90, 0), ps = P(-90, 0); c.fillText("PN", pn.x, pn.y - 14); c.fillText("PS", ps.x, ps.y + 34);
-      c.font = "400 22px " + FONT; var eq = P(0, lc + 60); c.fillText("экватор", eq.x, eq.y - 10);
+      c.strokeStyle = "#111"; c.lineWidth = 3; c.beginPath(); c.arc(cx, cy, r, 0, 2 * Math.PI); c.stroke();
+      for (var la = -180; la < 180; la += 30) curve(function (t) { return Q(t, la); }, -90, 90, 90, 0.9, [], true);
+      for (var ph = -60; ph <= 60; ph += 30) if (ph) curve(function (t) { return Q(ph, t); }, -180, 180, 180, 0.9, [], true);
+      c.globalAlpha = 1;
+      curve(function (t) { return Q(0, t); }, -180, 180, 360, 2.4, [], false);                     // экватор
+      curve(function (t) { return Q(t, 0); }, -90, 90, 180, 2.6, [], false);                       // меридиан 0°
+      curve(function (t) { return Q(t, 180); }, -90, 90, 180, 2.6, "dashdot", false);              // меридиан 180°
+      [x.l1, x.l2].forEach(function (l) { curve(function (t) { return Q(t, l); }, -90, 90, 180, 1.4, "fine", true); });   // меридианы точек
+      curve(function (t) { return Q(x.p2, t); }, -180, 180, 360, 1.2, "fine", true);              // параллель M₂
+      /* исходные дуги: λ по экватору от Гринвича, φ по меридианам от экватора */
+      var dl1 = n180(x.l1), dl2 = n180(x.l2);
+      curve(function (t) { return Q(-0.0, t); }, 0, dl1, 60, 5.5, [], true); curve(function (t) { return Q(0, t); }, 0, dl2, 60, 3, "dash", true);
+      curve(function (t) { return Q(t, x.l1); }, 0, x.p1, 60, 5.5, [], true); curve(function (t) { return Q(t, x.l2); }, 0, x.p2, 60, 3, "dash", true);
+      /* разность широт и долгот — двойные жирные линии */
+      curve(function (t) { return Q(t, x.l1); }, x.p1, x.p2, 60, 9, [], true);
+      curve(function (t) { return Q(x.p2, x.l1 + dL * t); }, 0, 1, 80, 9, [], true);
+      c.strokeStyle = "#fff"; [[function (t) { return Q(t, x.l1); }, x.p1, x.p2], [function (t) { return Q(x.p2, x.l1 + dL * t); }, 0, 1]].forEach(function (z) {
+        var prev = null; c.lineWidth = 3.4; for (var i = 0; i <= 60; i++) { var q = z[0](z[1] + (z[2] - z[1]) * i / 60); if (prev && q.vis && prev.vis) { c.beginPath(); c.moveTo(prev.x, prev.y); c.lineTo(q.x, q.y); c.stroke(); } prev = q; } });
+      function lab(s, q, cands, o) { o = o || {}; pl.put(s, cands.map(function (k) { return [q.x + k[0], q.y + k[1], k[2] || "center"]; }), { size: o.size || 26, italic: o.italic, bold: o.bold, color: q.vis ? "#111" : "#777" }); }
+      var dP = x.p2 - x.p1;
+      tx(c, "Δφ = РШ = " + dm(Math.abs(dP), "", 0) + " к " + (dP >= 0 ? "N" : "S") + ";   Δλ = РД = " + dm(Math.abs(dL), "", 0) + " к " + (dL >= 0 ? "E" : "W"), 30, 36, { size: 27, bold: true, align: "left", halo: false });
+      pl.block(20, 14, 980, 58);
+      var pn = Q(90, 0), ps = Q(-90, 0); c.fillStyle = "#111"; c.beginPath(); c.arc(pn.x, pn.y, 6, 0, 7); c.fill(); c.beginPath(); c.arc(ps.x, ps.y, 6, 0, 7); c.fill();
+      lab("P_{N}", pn, [[0, -28], [30, -14, "left"]], { size: 30, italic: true }); lab("P_{S}", ps, [[0, 30], [30, 14, "left"]], { size: 30, italic: true });
+      [[x.p1, x.l1, "M_{1}"], [x.p2, x.l2, "M_{2}"]].forEach(function (m) { var q = Q(m[0], m[1]); c.fillStyle = q.vis ? "#111" : "#888"; c.beginPath(); c.arc(q.x, q.y, 10, 0, 2 * Math.PI); c.fill(); pl.block(q.x - 11, q.y - 11, q.x + 11, q.y + 11);
+        lab(m[2], q, [[18, -24, "left"], [-18, -24, "right"], [18, 26, "left"], [-18, 26, "right"]], { size: 32, bold: true, italic: true }); });
+      var mD = Q((x.p1 + x.p2) / 2, x.l1), mL = Q(x.p2, x.l1 + dL / 2);
+      lab("Δφ", mD, [[-20, 0, "right"], [20, 0, "left"], [-20, -30, "right"], [20, 30, "left"]], { bold: true, italic: true, size: 30 });
+      lab("Δλ", mL, [[0, x.p2 >= 0 ? -28 : 30], [0, x.p2 >= 0 ? 30 : -28], [24, -26, "left"]], { bold: true, italic: true, size: 30 });
+      var mL1 = Q(0, dl1 / 2), mL2 = Q(0, dl2 / 2), mF1 = Q(x.p1 / 2, x.l1), mF2 = Q(x.p2 / 2, x.l2);
+      if (Math.abs(dl1) > 4) lab("λ_{1}", mL1, [[0, 26], [0, -26], [24, 20, "left"]], { italic: true });
+      if (Math.abs(dl2) > 4) lab("λ_{2}", mL2, [[0, -26], [0, 26], [24, -20, "left"]], { italic: true });
+      if (Math.abs(x.p1) > 4) lab("φ_{1}", mF1, [[-22, 0, "right"], [22, 0, "left"]], { italic: true });
+      if (Math.abs(x.p2) > 4) lab("φ_{2}", mF2, [[22, 0, "left"], [-22, 0, "right"]], { italic: true });
+      /* подписи меридианов 0° и 180° и экватора — на видимой половине */
+      [[0, "меридиан 0°"], [180, "меридиан 180°"]].forEach(function (m) { var cs = []; for (var t = -70; t <= 70; t += 10) { var q = Q(t, m[0]); if (q.vis) cs.push(q); }
+        cs.sort(function (a, b) { return Math.abs(a.y - cy) - Math.abs(b.y - cy); });
+        if (cs.length) pl.put(m[1], cs.slice(0, 6).reduce(function (acc, q) { return acc.concat([[q.x + 14, q.y, "left"], [q.x - 14, q.y, "right"]]); }, []), { size: 24, italic: true }); });
+      var eqs = []; for (var t = -85; t <= 85; t += 5) { var q = Q(0, lc + t); if (q.vis) eqs.push([q.x, q.y + 22]); }
+      eqs.sort(function (a, b) { return Math.abs(b[0] - cx) - Math.abs(a[0] - cx); }); pl.put("экватор", eqs.slice(0, 8), { size: 24, italic: true });
+      tx(c, "Меридиан 0° — сплошная, меридиан 180° — штрихпунктир; невидимые линии — серый пунктир", 30, H - 26, { size: 21, align: "left", halo: false, color: "#444" });
     } }
   };
+
+  /* таблица исходных данных варианта (как табл. 1.1 методички) — в начале отчёта */
+  function dataTable(D, d) {
+    var rows = [
+      ["1", "d на карте " + d.t1y + " г. = " + d.t1d + ", годовое изменение " + d.t1c + "′ к " + d.t1dir, "d на " + d.year + " г."],
+      ["2", "ИК = " + d.t2ik + "°, d = " + d.t2d, "δ (из табл. девиации), КК, МК, ΔМК; чертёж"],
+      ["3", "ИК = " + d.t3ik + "°, МК = " + d.t3mk + "°, ΔМК = " + d.t3dmk + "°, КУ = " + d.t3ku, "ИП, КП, МП, КК, d и δ; чертёж"],
+      ["4", "МК = " + d.t4mk + "°, d = " + d.t4d + ", ΔГК = " + d.t4dgk + "°", "ГКК; чертёж"],
+      ["5", "ИП_{ств} = " + d.t5ip + "°, ОКП_{ств} = " + d.t5okp + "°, d = " + d.t5d, "δ_{гл}, ΔМК_{гл}; чертёж"],
+      ["6", "КК_{гл} = " + d.t6kg + "°, КК_{пут} = " + d.t6kp + "°", "δ_{гл} (из табл. девиации), δ_{пут}"],
+      ["7", "ГКК = " + d.t7gkk + "°, КК_{гл} = " + d.t7kk + "°, ΔГК = " + d.t7dgk + "°", "ΔМК_{гл}"],
+      ["8", "ГКП_{св} = " + d.t8gkp + "°, А_{св} = " + d.t8a, "ΔГК"],
+      ["9", "φ_{1} = " + d.t9p1 + ", λ_{1} = " + d.t9l1 + ";  φ_{2} = " + d.t9p2 + ", λ_{2} = " + d.t9l2, "Δφ, Δλ; чертёж"],
+      ["10", "T_{1} = " + d.t10t1 + ", ОЛ_{1} = " + d.t10ol1 + ", " + (isTime(d.t10x) ? "T_{2} = " + d.t10x : "ОЛ_{2} = " + d.t10x) + ", V = " + d.t10v + " уз, ΔЛ = " + d.t10dl + "%", isTime(d.t10x) ? "ОЛ_{2}" : "T_{2}"],
+      ["11", "D_{к} = " + d.t11dk + " мили, e = " + d.t11e + " м", "D_{п}"]
+    ].map(function (r) { return r.map(function (v) { return String(v).replace(/\./g, function (m, i, s) { return /\d\.\d/.test(s.substr(i - 1, 3)) ? "," : m; }); }); });
+    D.head("Исходные данные (вариант " + d.variant + ", табл. 1.1)", { size: 13, before: 6, after: 4 });
+    D.table(["№", "Дано", "Найти"], rows, { widths: [1, 10, 5.5], size: 10 });
+  }
 
   App.taskWork({
     disc: "nav", discName: "Навигация и лоция", id: "nav-lr1", order: 1, key: "nav-lr1", file: "ЛР1_Основы_навигации",
@@ -4113,6 +4264,7 @@ var LR1Engine = (function () {
     titleTopic: "Решение задач по основам навигации",
     desc: "11 задач по табл. 1.1 для вариантов 1–25: склонение, перевод курсов и пеленгов, девиация, ΔГК по светилу, РШ и РД, счисление по лагу, дальность видимости. Чертежи.",
     variants: 25, variantData: variantData, solve: solve, figs: figs, keep: ["dev"],
+    intro: function (D, d) { dataTable(D, d); },
     goal: "Учебная цель — проверить знания по основам навигации и умение выполнять элементарные навигационные расчёты: определение разности широт, разности долгот, координат пунктов, дальности видимости ориентиров в море, пройденного расстояния, скорости, времени плавания, направлений с использованием компасов.",
     hint: "Данные подставляются из табл. 1.1 методички. Для задач 2 и 6 нужна таблица девиации из «Практикума по основам навигации» (с. 35) — впишите её один раз, она сохранится для всех вариантов.",
     sections: [
