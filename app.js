@@ -3214,11 +3214,834 @@ var LR1Engine = (function () {
     render: opener(LR1), _test: { buildDocx: buildDocxLR1 }
   });
   App.register("tomg", {
-    id: "tomg-lr2", order: 2, no: "ЛР 2", short: "ЛР №2",
+    id: "tomg-lr2", order: 2.5, no: "ЛР 2*", short: "ЛР №2 (2016)",
     title: "Грузовой план судна: запасы на рейс и центр тяжести",
-    desc: "Полный расчёт по методичке: рейс и запасы, 7-балльная совместимость, УПО, Pдоп/qдоп, центр тяжести и готовый отчёт.",
+    desc: "Прежняя ЛР №2 по методичке ТМП 2016 г.: рейс и запасы, 7-балльная совместимость, УПО, Pдоп/qдоп, центр тяжести и готовый отчёт.",
     titleTopic: "Предварительный расчёт грузового плана судна", titleExtra: titleExtraLR2,
     render: opener(LR2), _test: { buildDocx: buildDocxFull }
+  });
+})();
+
+/* ======================================================================
+   РАБОТЫ → ТОМПГ → ЛР №2 (методичка ТМП, лабораторные работы):
+   «Расчёт коэффициента укладки груза и удельного погрузочного объёма».
+   Трюм № 1: свободное пространство L × B × H (варианты 1–28 по списку),
+   ящики без планок (Кф = 1) 100 × 60 × 50 см, 50 кг, «не кантовать»,
+   доски 2,5 см через каждые три яруса, промежутки — прокладочный материал.
+   Формулы — «ТМП», 3-е изд., с. 15–17: (1.4)–(1.18).
+   Укладка в ярусе:
+   • «наилучшая» — максимум ящиков в ярусе (гильотинные блоки, перебор всех
+     разрезов; максимум доказывается по площади Lэф × Bэф — наибольшим суммам
+     сторон 1,0 и 0,6 м, не превышающим L и B); ярусы через один — другая
+     укладка с тем же числом мест и смещёнными швами (перевязка), если она есть;
+   • «как в образце» — нечётные ярусы 0,6 м вдоль L, чётные повёрнуты на 90°;
+   • «один на один» — все ярусы одинаковы (линейные коэффициенты (1.8)–(1.11)).
+   ====================================================================== */
+(function () {
+  "use strict";
+  var f = App.f;
+  /* варианты задания (методичка, «Размеры свободного пространства в трюме») */
+  var VARS = (function () {
+    var a = [null], i;
+    for (i = 1; i <= 9; i++) a.push([5 + i / 10, 5.0, 5.2]);
+    a.push([6.0, 5.0, 5.2]);
+    for (i = 11; i <= 28; i++) a.push([6.0, 5.0 + (i - 10) / 10, 5.2]);
+    return a;
+  })();
+  var NV = []; for (var vi = 1; vi <= 28; vi++) NV.push(vi);
+  var MODES = [["best", "наилучшая — максимум ящиков в ярусе"], ["rot", "как в образце — ярусы через один повёрнуты на 90°"], ["one", "один на один — все ярусы одинаковы"]];
+  var MODE_NAME = { best: "Наилучшая (максимум мест в ярусе)", rot: "Ярусы через один повёрнуты на 90° (как в образце)", one: "Один на один (все ярусы одинаковы)" };
+
+  function num(s) { var v = parseFloat(String(s == null ? "" : s).replace(/\s/g, "").replace(",", ".")); return isFinite(v) ? v : NaN; }
+  /* число: не больше max знаков после запятой, не меньше min (лишние нули убираются) */
+  function fx(x, max, min) {
+    if (!isFinite(x)) return "—";
+    max = max === undefined ? 3 : max; min = min === undefined ? 1 : min;
+    var s = (Math.round(x * Math.pow(10, max)) / Math.pow(10, max)).toFixed(max);
+    if (max > 0) { var dec = s.split(".")[1]; while (dec.length > min && dec.charAt(dec.length - 1) === "0") dec = dec.slice(0, -1); s = s.split(".")[0] + (dec.length ? "." + dec : ""); }
+    if (/^-0(\.0*)?$/.test(s)) s = s.slice(1);
+    return s.replace(".", ",").replace("-", "−");
+  }
+  var m = function (mm) { return fx(mm / 1000, 3, 1); };          // мм → «5,2»
+  var m2 = function (mm2) { return fx(mm2 / 1e6, 3, 1); };        // мм² → м²
+  var m3 = function (mm3) { return fx(mm3 / 1e9, 3, 1); };        // мм³ → м³
+
+  /* ---------- раскрой яруса ---------- */
+  function raster(X, a, b) {
+    var s = {}, i, j;
+    for (i = 0; i * a <= X; i++) for (j = 0; i * a + j * b <= X; j++) { s[i * a + j * b] = 1; if (b <= 0) break; }
+    return Object.keys(s).map(Number).sort(function (p, q) { return p - q; });
+  }
+  function rasterSplit(X, a, b) {   // X = i·a + j·b, наибольшее i
+    for (var i = Math.floor(X / a); i >= 0; i--) { var r = X - i * a; if (r % b === 0) return [i, r / b]; }
+    return null;
+  }
+  /* соседние блоки одной ориентации, стоящие встык по всей стороне, — один блок */
+  function mergeBlocks(blocks) {
+    var bl = blocks.map(function (x) { return Object.assign({}, x); }), done = false;
+    while (!done) {
+      done = true;
+      for (var i = 0; i < bl.length && done; i++) for (var j = 0; j < bl.length && done; j++) {
+        if (i === j) continue; var p = bl[i], q = bl[j];
+        if (p.o !== q.o) continue;
+        if (p.x === q.x && p.w === q.w && p.nx === q.nx && p.y + p.h === q.y) { p.ny += q.ny; p.h += q.h; bl.splice(j, 1); done = false; }
+        else if (p.y === q.y && p.h === q.h && p.ny === q.ny && p.x + p.w === q.x) { p.nx += q.nx; p.w += q.w; bl.splice(j, 1); done = false; }
+      }
+    }
+    return bl;
+  }
+  function layoutOf(blocks, a, b) {
+    blocks = mergeBlocks(blocks);
+    var boxes = [], W = 0, Hh = 0;
+    blocks.forEach(function (bl) {
+      var w = bl.o === "L" ? a : b, h = bl.o === "L" ? b : a;
+      for (var i = 0; i < bl.nx; i++) for (var j = 0; j < bl.ny; j++)
+        boxes.push({ x0: bl.x + i * w, y0: bl.y + j * h, x1: bl.x + (i + 1) * w, y1: bl.y + (j + 1) * h, o: bl.o });
+    });
+    boxes.forEach(function (q) { W = Math.max(W, q.x1); Hh = Math.max(Hh, q.y1); });
+    return { blocks: blocks, boxes: boxes, n: boxes.length, w: W, h: Hh };
+  }
+  function keyOf(l) { return l.boxes.map(function (q) { return q.x0 + ":" + q.y0 + ":" + q.o; }).sort().join("|"); }
+  function mirror(l, mx, my, a, b) {
+    return layoutOf(l.blocks.map(function (bl) {
+      return Object.assign({}, bl, { x: mx ? l.w - bl.x - bl.w : bl.x, y: my ? l.h - bl.y - bl.h : bl.y });
+    }), a, b);
+  }
+  function grid(o, X, Y, a, b) {
+    var nx = Math.floor(X / (o === "L" ? a : b)), ny = Math.floor(Y / (o === "L" ? b : a));
+    return layoutOf(nx > 0 && ny > 0 ? [{ x: 0, y: 0, o: o, nx: nx, ny: ny, w: nx * (o === "L" ? a : b), h: ny * (o === "L" ? b : a) }] : [], a, b);
+  }
+  /* гильотинный раскрой прямоугольника x × y на места a × b (a — длинная сторона) */
+  function makePacker(a, b, pref) {
+    var memo = {}, rc = {};
+    function R(X) { if (!rc[X]) rc[X] = raster(X, a, b); return rc[X]; }
+    function rf(X) { var r = R(X); return r[r.length - 1]; }
+    function fills(x, y) {
+      var fB = { t: "f", o: "B", nx: Math.floor(x / b), ny: Math.floor(y / a) }, fL = { t: "f", o: "L", nx: Math.floor(x / a), ny: Math.floor(y / b) };
+      return pref.o === "L" ? [fL, fB] : [fB, fL];
+    }
+    function opts(x, y) {
+      var res = [];
+      fills(x, y).forEach(function (fl) { var n = fl.nx * fl.ny; if (n > 0) res.push({ n: n, k: 1, p: fl }); });
+      (pref.dir === "y" ? ["y", "x"] : ["x", "y"]).forEach(function (dir) {
+        var X = dir === "x" ? x : y, cs = R(X).filter(function (c) { return c > 0 && c < X; });
+        if (pref.big) cs.reverse();
+        cs.forEach(function (c) {
+          var r2 = rf(X - c), p1 = dir === "x" ? best(c, y) : best(x, c), p2 = dir === "x" ? best(r2, y) : best(x, r2);
+          if (p1.n && p2.n) res.push({ n: p1.n + p2.n, k: p1.k + p2.k, p: { t: dir, c: c, r2: r2 } });
+        });
+      });
+      return res;
+    }
+    function best(x, y) {
+      var key = x + "," + y;
+      if (memo[key]) return memo[key];
+      var top = { n: 0, k: 0, p: null };
+      opts(x, y).forEach(function (o) { if (o.n > top.n || (o.n === top.n && o.k < top.k)) top = o; });
+      memo[key] = top; return top;
+    }
+    function build(x0, y0, x, y, node, out) {
+      var t = node || best(x, y); if (!t.p) return out;
+      var p = t.p;
+      if (p.t === "f") out.push({ x: x0, y: y0, o: p.o, nx: p.nx, ny: p.ny, w: p.nx * (p.o === "L" ? a : b), h: p.ny * (p.o === "L" ? b : a) });
+      else if (p.t === "x") { build(x0, y0, p.c, y, null, out); build(x0 + p.c, y0, p.r2, y, null, out); }
+      else { build(x0, y0, x, p.c, null, out); build(x0, y0 + p.c, x, p.r2, null, out); }
+      return out;
+    }
+    return { best: best, opts: opts, build: build, rf: rf };
+  }
+  var PREFS = [];
+  ["x", "y"].forEach(function (dir) { ["B", "L"].forEach(function (o) { [false, true].forEach(function (big) { PREFS.push({ dir: dir, o: o, big: big }); }); }); });
+
+  function seamMap(l) {
+    var V = {}, Hz = {};
+    l.boxes.forEach(function (q) {
+      if (q.x0 > 0) (V[q.x0] = V[q.x0] || []).push([q.y0, q.y1]);
+      if (q.x1 < l.w) (V[q.x1] = V[q.x1] || []).push([q.y0, q.y1]);
+      if (q.y0 > 0) (Hz[q.y0] = Hz[q.y0] || []).push([q.x0, q.x1]);
+      if (q.y1 < l.h) (Hz[q.y1] = Hz[q.y1] || []).push([q.x0, q.x1]);
+    });
+    function merge(mp) {
+      Object.keys(mp).forEach(function (k) {
+        var arr = mp[k].sort(function (p, q) { return p[0] - q[0]; }), out = [];
+        arr.forEach(function (iv) { var last = out[out.length - 1]; if (last && iv[0] <= last[1]) last[1] = Math.max(last[1], iv[1]); else out.push(iv.slice()); });
+        mp[k] = out;
+      });
+      return mp;
+    }
+    return { V: merge(V), H: merge(Hz) };
+  }
+  function seamOverlap(A, B) {
+    var s = 0;
+    ["V", "H"].forEach(function (t) {
+      Object.keys(A[t]).forEach(function (k) {
+        var bb = B[t][k]; if (!bb) return;
+        A[t][k].forEach(function (p) { bb.forEach(function (q) { s += Math.max(0, Math.min(p[1], q[1]) - Math.max(p[0], q[0])); }); });
+      });
+    });
+    return s;
+  }
+  function seamTotal(A) { var s = 0; ["V", "H"].forEach(function (t) { Object.keys(A[t]).forEach(function (k) { A[t][k].forEach(function (p) { s += p[1] - p[0]; }); }); }); return s; }
+
+  var bestCache = {};
+  function bestPair(L, B, a, b) {
+    var ck = [L, B, a, b].join(","); if (bestCache[ck]) return bestCache[ck];
+    var cands = [], seen = {}, Nmax = 0;
+    function add(l) { var k = keyOf(l); if (!seen[k]) { seen[k] = 1; cands.push(l); } }
+    PREFS.forEach(function (pref) {
+      var P = makePacker(a, b, pref), rL = P.rf(L), rB = P.rf(B), t = P.best(rL, rB);
+      if (!t.n) return;
+      Nmax = Math.max(Nmax, t.n);
+      [t].concat(P.opts(rL, rB)).forEach(function (o) {
+        if (!o.p || o.n < t.n) return;
+        var l = layoutOf(P.build(0, 0, rL, rB, o, []), a, b);
+        add(l); add(mirror(l, 1, 0, a, b)); add(mirror(l, 0, 1, a, b)); add(mirror(l, 1, 1, a, b));
+      });
+    });
+    cands = cands.filter(function (l) { return l.n === Nmax; })
+      .sort(function (p, q) { return p.blocks.length - q.blocks.length || p.w * p.h - q.w * q.h; }).slice(0, 80);
+    if (!cands.length) return (bestCache[ck] = null);
+    var sm = cands.map(seamMap), top = null;
+    for (var i = 0; i < cands.length; i++) for (var j = 0; j < cands.length; j++) {
+      var U = Math.max(cands[i].w, cands[j].w) * Math.max(cands[i].h, cands[j].h);
+      var S = i === j ? seamTotal(sm[i]) : seamOverlap(sm[i], sm[j]);
+      var K = cands[i].blocks.length + cands[j].blocks.length;
+      var sc = [U, S + 5000 * K, i, j];   /* 1 лишний блок ≈ 5 м совпадающих швов: проще схема важнее */
+      if (!top || sc[0] < top[0] || (sc[0] === top[0] && (sc[1] < top[1] || (sc[1] === top[1] && (sc[2] < top[2] || (sc[2] === top[2] && sc[3] < top[3])))))) top = sc;
+    }
+    var I = cands[top[2]], II = cands[top[3]];
+    var res = { I: I, II: II, same: top[2] === top[3], Nmax: Nmax, overlap: top[2] === top[3] ? 1 : seamOverlap(sm[top[2]], sm[top[3]]) / Math.max(1, seamTotal(sm[top[2]])) };
+    bestCache[ck] = res; return res;
+  }
+  /* промежутки внутри габарита штабеля (для схем и баланса объёма) */
+  function gapRects(l, W, Hh) {
+    var xs = {}, ys = {};
+    [0, W].forEach(function (v) { xs[v] = 1; }); [0, Hh].forEach(function (v) { ys[v] = 1; });
+    l.boxes.forEach(function (q) { xs[q.x0] = xs[q.x1] = 1; ys[q.y0] = ys[q.y1] = 1; });
+    var X = Object.keys(xs).map(Number).filter(function (v) { return v <= W; }).sort(function (p, q) { return p - q; });
+    var Y = Object.keys(ys).map(Number).filter(function (v) { return v <= Hh; }).sort(function (p, q) { return p - q; });
+    var out = [];
+    for (var j = 0; j + 1 < Y.length; j++) {
+      var run = null, cy = (Y[j] + Y[j + 1]) / 2;
+      for (var i = 0; i + 1 < X.length; i++) {
+        var cx = (X[i] + X[i + 1]) / 2;
+        var cov = l.boxes.some(function (q) { return q.x0 < cx && cx < q.x1 && q.y0 < cy && cy < q.y1; });
+        if (!cov) { if (run) run.x1 = X[i + 1]; else run = { x0: X[i], y0: Y[j], x1: X[i + 1], y1: Y[j + 1] }; }
+        else if (run) { out.push(run); run = null; }
+      }
+      if (run) out.push(run);
+    }
+    return out;
+  }
+
+  /* ---------- расчёт ---------- */
+  function layoutFor(mode, L, B, a, b) {
+    if (mode === "rot") { var gB = grid("B", L, B, a, b), gL = grid("L", L, B, a, b); return { I: gB, II: gL, same: false }; }
+    if (mode === "one") {
+      var g1 = grid("B", L, B, a, b), g2 = grid("L", L, B, a, b);
+      var g = g2.n > g1.n || (g2.n === g1.n && g2.w * g2.h < g1.w * g1.h) ? g2 : g1;
+      return { I: g, II: g, same: true };
+    }
+    var bp = bestPair(L, B, a, b);
+    if (!bp) return { I: layoutOf([], a, b), II: layoutOf([], a, b), same: true };
+    return { I: bp.I, II: bp.II, same: bp.same, overlap: bp.overlap };
+  }
+  function core(G, mode) {
+    var lp = layoutFor(mode, G.L, G.B, G.a, G.b), I = lp.I, II = lp.II, n = G.n, nd = G.nd;
+    var n1 = Math.ceil(n / 2), n2 = Math.floor(n / 2), N = n1 * I.n + n2 * II.n;
+    var Lsh = Math.max(I.w, II.w), Bsh = Math.max(I.h, II.h), Hsh = G.Hsh, S = Lsh * Bsh, sm = G.a * G.b;
+    var Vsv = G.L * G.B * G.H, Vm = G.a * G.b * G.h, sumV = N * Vm, Vsh = S * Hsh;
+    var Q = N * G.q / 1000;                     // т
+    var r = {
+      mode: mode, I: I, II: II, same: lp.same || keyOf(I) === keyOf(II), overlap: lp.overlap, n1: n1, n2: n2, N: N, Q: Q,
+      Lsh: Lsh, Bsh: Bsh, Hsh: Hsh, S: S, Vsv: Vsv, Vm: Vm, sumV: sumV, Vsh: Vsh,
+      Kuk: sumV ? Vsh / sumV : NaN, Ktr: Vsh ? Vsv / Vsh : NaN, mu: Q ? Vsv / 1e9 / Q : NaN, u: Q ? Vsh / 1e9 / Q : NaN,
+      Kd: n ? Hsh / (n * G.h) : NaN, Kpl: N ? n * S / (N * sm) : NaN,
+      Vdos: nd * S * G.bt, Vprom: (n1 * (S - I.n * sm) + n2 * (S - II.n * sm)) * G.h,
+      Vnar: Vsv - Vsh, Vend: (G.L - Lsh) * G.B * Hsh, Vside: Lsh * (G.B - Bsh) * Hsh, Vtop: G.L * G.B * (G.H - Hsh)
+    };
+    r.gapsI = gapRects(I, Lsh, Bsh); r.gapsII = gapRects(II, Lsh, Bsh);
+    return r;
+  }
+  function geometry(d) {
+    var G = { L: Math.round(num(d.L) * 1000), B: Math.round(num(d.B) * 1000), H: Math.round(num(d.H) * 1000),
+      a: Math.round(num(d.lc) * 10), b: Math.round(num(d.bc) * 10), h: Math.round(num(d.hc) * 10),
+      q: num(d.q), bt: Math.round(num(d.bt) * 10), k: parseInt(d.bk, 10), hold: String(d.hold || "1").trim() || "1" };
+    var bad = [];
+    ["L", "B", "H"].forEach(function (k) { if (!(G[k] > 0)) bad.push("размер " + k + " свободного пространства"); });
+    if (!(G.a > 0 && G.b > 0 && G.h > 0)) bad.push("размеры ящика");
+    if (!(G.q > 0)) bad.push("масса ящика");
+    if (!(G.bt >= 0)) G.bt = 0;
+    if (!(G.k >= 1)) G.k = 0;
+    if (bad.length) return { bad: bad };
+    G.swap = G.a < G.b; if (G.swap) { var t = G.a; G.a = G.b; G.b = t; }
+    var bOn = G.k >= 1 && G.bt > 0, n = 0;
+    while ((n + 1) * G.h + (bOn ? Math.floor(n / G.k) : 0) * G.bt <= G.H) n++;
+    G.n = n; G.nd = n > 0 && bOn ? Math.floor((n - 1) / G.k) : 0; G.bOn = bOn;
+    G.Hsh = n * G.h + G.nd * G.bt;
+    G.z0 = [0]; for (var t2 = 1; t2 <= n; t2++) G.z0.push((t2 - 1) * G.h + (bOn ? Math.floor((t2 - 1) / G.k) : 0) * G.bt);
+    G.zb = [0]; for (var j = 1; j <= G.nd; j++) G.zb.push(j * G.k * G.h + (j - 1) * G.bt);
+    return G;
+  }
+
+  /* ---------- тексты ---------- */
+  var COMPAT = [
+    ["1", "Совместная перевозка на одном судне запрещается"],
+    ["2", "«Через отсек от…» — разделение двумя стальными водонепроницаемыми переборками"],
+    ["3", "«В соседнем отсеке от…» — разделение вертикальной стальной водонепроницаемой переборкой"],
+    ["4", "«В одном отсеке, но в разных помещениях»"],
+    ["5", "«В одном помещении при условии разделения грузом, нейтральным к обоим»"],
+    ["6", "«В одном помещении, но с сепарацией»"],
+    ["7", "Совместное размещение допускается без ограничений"]
+  ];
+  var COMPAT_TEXT = [
+    "По условиям совместимости («ТМП», табл. 1.1) грузы делят на две группы. Грузы, обладающие агрессивными свойствами: I — влаговыделяющие (гигроскопические, биологические, искусственно увлажнённые); II — тепловыделяющие (поступающие к перевозке с повышенной температурой, нагревающиеся при увлажнении, нагревающиеся в силу своих биологических свойств); III — самовозгорающиеся; IV — газовыделяющие; V — ядовитые; VI — пылящие (абразивные и прочие); VII — выделяющие запахи (одорирующие); VIII — опасные как носители карантинных объектов.",
+    "Грузы, подверженные воздействию агрессивных факторов: I — портящиеся под воздействием влаги (окисляющиеся, изменяющие структуру, загнивающие и плесневеющие, выделяющие газы); II — портящиеся под воздействием тепла; III — легковоспламеняющиеся от нагрева и от окисления; IV — подверженные воздействию ядовитых веществ; V — портящиеся от пыли; VI — воспринимающие запахи; VII — подверженные воздействию карантинных объектов.",
+    "В таблице совместимости строки — агрессивные грузы, графы — грузы, подверженные агрессивным факторам; на пересечении стоит балл 7-балльной системы, по которому выбирают условия совместного размещения пары грузов:"
+  ];
+  var QA = [
+    ["Транспортные характеристики грузов", "Совокупность свойств груза, которые определяют условия и технологию его перевозки, перегрузки и хранения: вид груза, тара и упаковка, размеры и масса грузового места, объёмно-массовые характеристики (удельный погрузочный объём, плотность или насыпная масса), физико-химические и биологические свойства, опасность, совместимость с другими грузами, требуемый режим перевозки (температура, влажность, вентиляция)."],
+    ["Транспортная классификация грузов", "По физическому состоянию и способу перевозки грузы делят на генеральные (штучные: тарно-штучные — ящики, мешки, кипы, бочки, рулоны; нетарные — металл, техника, тяжеловесные и длинномерные; лесные; укрупнённые места — пакеты и контейнеры), навалочные (насыпные: зерно, руда, уголь и т. п.) и наливные (нефть, нефтепродукты, химические и пищевые жидкости). По условиям перевозки выделяют обычные, скоропортящиеся (требующие температурного режима), опасные и другие грузы с особым режимом. По объёмно-массовым характеристикам — тяжёлые (УПО меньше удельной грузовместимости судна, судно загружается до полной грузоподъёмности) и лёгкие (УПО больше — судно загружается по вместимости)."],
+    ["Классификация по совместимости грузов", "Грузы, обладающие агрессивными свойствами (влаговыделяющие, тепловыделяющие, самовозгорающиеся, газовыделяющие, ядовитые, пылящие, выделяющие запахи, опасные как носители карантинных объектов), и грузы, подверженные воздействию агрессивных факторов (портящиеся от влаги, от тепла, легковоспламеняющиеся, подверженные действию ядовитых веществ, портящиеся от пыли, воспринимающие запахи, подверженные действию карантинных объектов) — «ТМП», табл. 1.1."],
+    ["Таблицы совместимости грузов и их использование", "На пересечении строки агрессивного груза и графы груза, подверженного агрессивному фактору, стоит балл 7-балльной системы: 1 — совместная перевозка на одном судне запрещена; 2 — через отсек; 3 — в соседнем отсеке; 4 — в одном отсеке, но в разных помещениях; 5 — в одном помещении при разделении нейтральным грузом; 6 — в одном помещении с сепарацией; 7 — без ограничений. При составлении грузового плана для каждой пары грузов находят балл и по нему распределяют грузы по трюмам и помещениям."],
+    ["Линейные характеристики грузов", "Размеры грузового места — длина l_{м}, ширина b_{м}, высота h_{м} — и его форма. По ним находят габаритный объём места V_{м} = l_{м}·b_{м}·h_{м} (1.4), для мест неправильной формы — фактический объём V_{ф} = K_{ф}·V_{м} (1.5); выбирают способ укладки, число мест в ярусе и ярусов по высоте, определяют линейные коэффициенты укладки (1.9)–(1.11)."],
+    ["Объёмно-массовые характеристики грузов", "Масса места q_{м}, объём места V_{м}, удельный объём места u_{м} = V_{м}/q_{м}, удельный объём груза в штабеле u = V/Q (1.7), удельный погрузочный объём μ, для наливных грузов — плотность, для навалочных — насыпная масса."],
+    ["Трюмный коэффициент", "K_{тр} — поправка на изменение погрузочного объёма из-за формы грузового помещения: отношение объёма помещения к объёму уложенного в нём штабеля груза. Зависит от формы и размеров трюма и груза: в носовых и кормовых трюмах он больше, чем в средних (обводы корпуса, выступающий набор). Для бочек K_{тр} = 1,10–1,20, мешков 1,00–1,14, ящиков 1,04–1,25; для пакетированных грузов оптимальное значение 1,35, в концевых трюмах — на 0,3–0,6 больше. По K_{тр} определяют погрузочный объём μ = u·K_{тр} (1.17) и число мест, которое войдёт в трюм (1.16)."],
+    ["Коэффициент укладки груза", "K_{ук} = V/ΣV_{м} (1.6) — отношение объёма штабеля к сумме габаритных объёмов мест; учитывает промежутки между местами и прокладочный материал внутри штабеля. Зависит от типа и формы тары, способа и плотности укладки; для ящиков и кип — 1,1–1,3. Для мест прямоугольной формы, уложенных «один на один», K_{ук} = K_{l}·K_{β}·K_{δ} (1.8) ≈ 1 + i/l_{м} + β/b_{м} + δ/h_{м} (1.15). При укладке со смещением может быть меньше единицы; пакетирование увеличивает K_{ук}."],
+    ["Удельный погрузочный объём груза", "μ — объём грузового помещения, который занимает 1 т груза с учётом потерь объёма при укладке, м³/т: μ = u·K_{тр} (1.17) = W/Q. Зная μ и вместимость трюма W, находят массу груза, которую можно в него погрузить: Q = W/μ (1.18)."],
+    ["Насыпная масса груза", "Масса единицы объёма навалочного груза в естественном (насыпном) состоянии вместе с промежутками между частицами, т/м³. Зависит от крупности частиц, влажности и степени уплотнения. По насыпной массе определяют удельный погрузочный объём навалочного груза и массу груза, которую можно принять в трюм."]
+  ];
+
+  function tierList(from, n) { var a = []; for (var t = from; t <= n; t += 2) a.push(t); return a.join(", "); }
+  function oriText(o) { return o === "L" ? "длинной стороной вдоль L" : "длинной стороной вдоль B"; }
+  function blockText(bl, a, b) {
+    var dl = bl.o === "L" ? a : b, db = bl.o === "L" ? b : a, mc = function (v) { return v === 0 ? "0" : m(v); };
+    return "блок " + bl.nx + " × " + bl.ny + " = " + (bl.nx * bl.ny) + " шт. (" + m(dl) + " м вдоль L, " + m(db) + " м вдоль B) размером " + m(bl.w) + " × " + m(bl.h) +
+      " м, x = " + mc(bl.x) + "…" + m(bl.x + bl.w) + " м, y = " + mc(bl.y) + "…" + m(bl.y + bl.h) + " м";
+  }
+  function blocksText(l, a, b) {
+    return l.blocks.slice().sort(function (p, q) { return p.x - q.x || p.y - q.y; }).map(function (bl) { return blockText(bl, a, b); }).join("; ");
+  }
+
+  function solve(d) {
+    var G = geometry(d), warn = [], st = [];
+    if (G.bad) return { steps: [], warn: ["Проверьте вводные данные: " + G.bad.join(", ") + "."] };
+    if (G.swap) warn.push("Длина ящика меньше ширины — стороны поменяны местами: длинная сторона " + m(G.a) + " м, короткая " + m(G.b) + " м.");
+    if (!G.n) return { steps: [], warn: warn.concat(["Ящик высотой " + m(G.h) + " м не помещается по высоте H = " + m(G.H) + " м."]) };
+    var mode = MODE_NAME[d.mode] ? d.mode : "best";
+    var R = core(G, mode), Rb = mode === "best" ? R : core(G, "best"), Rr = mode === "rot" ? R : core(G, "rot"), Ro = mode === "one" ? R : core(G, "one");
+    if (!R.N) return { steps: [], warn: warn.concat(["Ящик " + m(G.a) + " × " + m(G.b) + " м не помещается в плане " + m(G.L) + " × " + m(G.B) + " м."]) };
+    var a = G.a, b = G.b, h = G.h, n = G.n, nd = G.nd, hold = G.hold;
+    var I = R.I, II = R.II, same = R.same;
+    var rL = raster(G.L, a, b).pop(), rB = raster(G.B, a, b).pop(), bound = Math.floor(rL * rB / (a * b));
+    var sL = rasterSplit(rL, a, b), sB = rasterSplit(rB, a, b);
+    var comb = function (sp) { var p = []; if (sp[0]) p.push(sp[0] + " · " + m(a)); if (sp[1]) p.push(sp[1] + " · " + m(b)); return p.join(" + ") || "0"; };
+    var no = 0, S = function (o) { o.no = "2." + (++no); o.noLabel = o.no + ". "; o.lines = o.lines || []; st.push(o); return o; };
+
+    /* 1. совместимость */
+    st.push({ no: "1", noLabel: "1. ", title: "Принцип классификации грузов по условиям совместимости", lines: [], paras: COMPAT_TEXT,
+      tables: [{ headers: ["Балл", "Условия совместной перевозки"], rows: COMPAT, widths: [1.6, 14.9], lefts: [1] }], kind: "compat" });
+
+    /* 2.1 */
+    S({ title: "Объём свободного пространства", lines: ["V_{св} = L · B · H = " + m(G.L) + " · " + m(G.B) + " · " + m(G.H) + " = " + m3(R.Vsv) + " м³"], answer: "V_{св} = " + m3(R.Vsv) + " м³" });
+    /* 2.2 */
+    S({ title: "Объём грузового места и удельный объём места",
+      lines: ["V_{м} = l_{м} · b_{м} · h_{м} = " + m(a) + " · " + m(b) + " · " + m(h) + " = " + m3(R.Vm) + " м³   (1.4)",
+        "V_{ф} = K_{ф} · V_{м} = 1 · " + m3(R.Vm) + " = " + m3(R.Vm) + " м³   (1.5)",
+        "u_{м} = V_{м} / q_{м} = " + m3(R.Vm) + " / " + fx(G.q / 1000, 3, 3) + " = " + fx(R.Vm / 1e9 / (G.q / 1000), 3, 1) + " м³/т"],
+      paras: ["Ящики без планок имеют правильную форму, поэтому K_{ф} = 1 и фактический объём места равен габаритному."],
+      answer: "V_{м} = " + m3(R.Vm) + " м³; u_{м} = " + fx(R.Vm / 1e9 / (G.q / 1000), 3, 1) + " м³/т" });
+    /* 2.3 */
+    var tl = [];
+    if (G.bOn) {
+      tl.push("n · h_{м} + n_{д} · δ_{д} ≤ H,   n_{д} = ⌊(n − 1) / " + G.k + "⌋");
+      tl.push("n = " + n + ":  " + n + " · " + m(h) + " + " + nd + " · " + m(G.bt) + " = " + m(G.Hsh) + " м ≤ " + m(G.H) + " м");
+      var nx = n + 1, ndx = Math.floor(n / G.k), hx = nx * h + ndx * G.bt;
+      tl.push("n = " + nx + ":  " + nx + " · " + m(h) + " + " + ndx + " · " + m(G.bt) + " = " + m(hx) + " м > " + m(G.H) + " м — не помещается");
+    } else {
+      tl.push("n = ⌊H / h_{м}⌋ = ⌊" + m(G.H) + " / " + m(h) + "⌋ = " + n);
+    }
+    tl.push("H_{шт} = " + n + " · " + m(h) + (nd ? " + " + nd + " · " + m(G.bt) : "") + " = " + m(G.Hsh) + " м;   Δh = H − H_{шт} = " + m(G.H) + " − " + m(G.Hsh) + " = " + m(G.H - G.Hsh) + " м");
+    var bAfter = []; for (var j = 1; j <= nd; j++) bAfter.push(j * G.k);
+    S({ title: "Число ярусов по высоте", lines: tl,
+      paras: ["Знак «не кантовать»: ящик стоит на основании " + m(a) + " × " + m(b) + " м, высота места h_{м} = " + m(h) + " м; поворачивать ящик можно только вокруг вертикальной оси." +
+        (G.bOn ? " Через каждые " + G.k + " яруса прокладываются доски толщиной δ_{д} = " + m(G.bt) + " м." : "")],
+      after: [nd ? "Принято " + n + " ярусов; доски — после " + bAfter.join(", ") + "-го " + (nd > 1 ? "ярусов" : "яруса") + " (" + nd + " " + App.plural(nd, "настил", "настила", "настилов") + "). Зазор Δh под палубой заполняется прокладочным материалом." :
+        "Принято " + n + " " + App.plural(n, "ярус", "яруса", "ярусов") + ". Зазор Δh под палубой заполняется прокладочным материалом."],
+      answer: "n = " + n + " " + App.plural(n, "ярус", "яруса", "ярусов") + (nd ? ", " + nd + " " + App.plural(nd, "настил", "настила", "настилов") + " досок" : "") + "; H_{шт} = " + m(G.Hsh) + " м" });
+    /* 2.4 */
+    var gB = grid("B", G.L, G.B, a, b), gL = grid("L", G.L, G.B, a, b);
+    var candRows = [
+      ["Все ящики " + oriText("B") + " (" + m(b) + " м вдоль L)", gB.n ? gB.blocks[0].nx + " × " + gB.blocks[0].ny : "—", String(gB.n), gB.n ? m(gB.w) + " × " + m(gB.h) : "—"],
+      ["Все ящики " + oriText("L") + " (" + m(a) + " м вдоль L)", gL.n ? gL.blocks[0].nx + " × " + gL.blocks[0].ny : "—", String(gL.n), gL.n ? m(gL.w) + " × " + m(gL.h) : "—"],
+      ["Наилучшая (перебор всех блочных схем)", Rb.I.blocks.map(function (bl) { return bl.nx + "×" + bl.ny; }).join(" + "), String(Rb.I.n), m(Rb.I.w) + " × " + m(Rb.I.h)]
+    ];
+    var p4 = [
+      "Ящики в ярусе можно ставить длинной стороной (" + m(a) + " м) вдоль L или вдоль B, а также блоками с разной ориентацией. Наибольшая длина, которую можно набрать из сторон " + m(a) + " и " + m(b) + " м, не превышая L = " + m(G.L) + " м: L_{эф} = " + comb(sL) + " = " + m(rL) + " м; по ширине B = " + m(G.B) + " м: B_{эф} = " + comb(sB) + " = " + m(rB) + " м.",
+      "Любую укладку можно сдвинуть вплотную к углу, и тогда ящики займут не больше L_{эф} × B_{эф} = " + m2(rL * rB) + " м². Значит, в ярусе не может быть больше ⌊" + m2(rL * rB) + " / (" + m(a) + " · " + m(b) + ")⌋ = " + bound + (bound % 10 === 1 && bound % 100 !== 11 ? " ящика." : " ящиков.")
+    ];
+    var after4 = [];
+    if (Rb.I.n === bound) after4.push("Наилучшая укладка даёт " + Rb.I.n + " " + App.plural(Rb.I.n, "ящик", "ящика", "ящиков") + " — это наибольшее возможное число мест в ярусе.");
+    else after4.push("Наибольшее число мест, найденное перебором всех блочных схем, — " + Rb.I.n + ".");
+    if (mode === "best") {
+      if (same) after4.push("Все ярусы укладываются одинаково («один на один»): другой укладки с тем же числом мест нет" + (Rb.I.n === bound && Rb.I.w * Rb.I.h === Rb.I.n * a * b ? " — ящики заполняют ярус без промежутков." : "."));
+      else after4.push("Чётные ярусы укладываются по другой схеме с тем же числом мест — швы между ящиками соседних ярусов смещены (перевязка), штабель устойчивее.");
+    } else if (mode === "rot") after4.push("Принята схема образца: нечётные ярусы — " + oriText("B") + ", чётные повёрнуты на 90° (" + oriText("L") + "). " +
+      (Rb.I.n > Math.min(I.n, II.n) ? "Она даёт меньше мест в ярусе, чем наилучшая укладка (" + Rb.I.n + " шт.)." : "По числу мест в ярусе она не уступает наилучшей."));
+    else after4.push("Принята укладка «один на один»: все ярусы одинаковы, " + oriText(I.blocks[0] ? I.blocks[0].o : "B") + ".");
+    after4.push((same ? "Все ярусы (1–" + n + ")" : "Ярусы " + tierList(1, n)) + " — " + I.n + " шт.: " + blocksText(I, a, b) + ".");
+    if (!same) after4.push("Ярусы " + tierList(2, n) + " — " + II.n + " шт.: " + blocksText(II, a, b) + ".");
+    after4.push("Габарит штабеля в плане: L_{шт} × B_{шт} = " + m(R.Lsh) + " × " + m(R.Bsh) + " м (схема — рис. 1).");
+    if (mode === "rot" && (I.n < Rb.I.n || II.n < Rb.I.n)) warn.push("Схема «как в образце» даёт " + (I.n === II.n ? I.n : I.n + " и " + II.n) + " " + App.plural(II.n, "ящик", "ящика", "ящиков") + " в ярусе, а наилучшая — " + Rb.I.n + ". Удельный погрузочный объём при наилучшей укладке меньше: " + fx(Rb.mu, 2, 2) + " против " + fx(R.mu, 2, 2) + " м³/т.");
+    S({ title: "Укладка ящиков в ярусе", paras: p4, lines: [],
+      tables: [{ title: "Таблица 2.1 — Число ящиков в ярусе при разных схемах", headers: ["Схема укладки в ярусе", "Ряды", "Ящиков", "Занимают, м"], rows: candRows, widths: [8.6, 2.6, 1.8, 3.5], lefts: [0] }],
+      after: after4, figs: ["plan"], answer: same ? I.n + " шт. в каждом ярусе" : I.n + " шт. в нечётных и " + II.n + " шт. в чётных ярусах" });
+    /* 2.5 */
+    var nl = same || I.n === II.n ? ["N = n · N_{я} = " + n + " · " + I.n + " = " + R.N + " шт."] : ["N = " + R.n1 + " · " + I.n + " + " + R.n2 + " · " + II.n + " = " + R.N + " шт."];
+    nl.push("Q = N · q_{м} = " + R.N + " · " + fx(G.q / 1000, 3, 3) + " = " + fx(R.Q, 3, 1) + " т");
+    nl.push("ΣV_{м} = N · V_{м} = " + R.N + " · " + m3(R.Vm) + " = " + m3(R.sumV) + " м³");
+    S({ title: "Количество, масса и объём грузовых мест", lines: nl, answer: "N = " + R.N + " шт.; Q = " + fx(R.Q, 3, 1) + " т; ΣV_{м} = " + m3(R.sumV) + " м³" });
+    /* 2.6 */
+    S({ title: "Объём штабеля", lines: ["V_{шт} = L_{шт} · B_{шт} · H_{шт} = " + m(R.Lsh) + " · " + m(R.Bsh) + " · " + m(G.Hsh) + " = " + m3(R.Vsh) + " м³"],
+      paras: ["Штабель — прямоугольный объём, который занимают ящики вместе с досками и промежутками внутри штабеля (рис. 2)."], figs: ["side"], answer: "V_{шт} = " + m3(R.Vsh) + " м³" });
+    /* 2.7 */
+    var r4 = function (x) { return Math.round(x * 1e4) / 1e4; };
+    var kl = ["K_{ук} = V_{шт} / ΣV_{м} = " + m3(R.Vsh) + " / " + m3(R.sumV) + " = " + fx(R.Kuk, 3, 3) + "   (1.6)"];
+    var kp = ["Проверка через линейные коэффициенты (1.8): K_{ук} = K_{l} · K_{β} · K_{δ}."];
+    if (same && I.blocks.length === 1) {
+      var bl0 = I.blocks[0], dl0 = bl0.o === "L" ? a : b, db0 = bl0.o === "L" ? b : a;
+      var Kl = R.Lsh / (bl0.nx * dl0), Kb = R.Bsh / (bl0.ny * db0);
+      kl.push("K_{l} = L_{шт} / Σl_{м} = " + m(R.Lsh) + " / (" + bl0.nx + " · " + m(dl0) + ") = " + fx(Kl, 4, 4) + "   (1.9)");
+      kl.push("K_{β} = B_{шт} / Σb_{м} = " + m(R.Bsh) + " / (" + bl0.ny + " · " + m(db0) + ") = " + fx(Kb, 4, 4) + "   (1.10)");
+      kl.push("K_{δ} = H_{шт} / Σh_{м} = " + m(G.Hsh) + " / (" + n + " · " + m(h) + ") = " + fx(R.Kd, 4, 4) + "   (1.11)");
+      kl.push("K_{ук} = " + fx(Kl, 4, 4) + " · " + fx(Kb, 4, 4) + " · " + fx(R.Kd, 4, 4) + " = " + fx(r4(Kl) * r4(Kb) * r4(R.Kd), 4, 4) + "   (1.8)");
+      var dav = nd * G.bt / n;
+      kl.push("K_{ук} ≈ 1 + i / l_{м} + β / b_{м} + δ / h_{м} = 1 + 0 + 0 + " + fx(dav / 1000, 4, 4) + " / " + m(h) + " = " + fx(1 + dav / h, 4, 4) + "   (1.15)");
+      kp.push("Ящики стоят вплотную (зазоры i = β = 0), средняя толщина досок на один ярус δ = n_{д} · δ_{д} / n = " + nd + " · " + m(G.bt) + " / " + n + " = " + fx(dav / 1000, 4, 4) + " м.");
+    } else {
+      var Spl = same || I.n === II.n ? "L_{шт} · B_{шт} / (N_{я} · l_{м} · b_{м}) = " + m2(R.S) + " / (" + I.n + " · " + m(a) + " · " + m(b) + ")" : "n · L_{шт} · B_{шт} / (N · l_{м} · b_{м}) = " + n + " · " + m2(R.S) + " / (" + R.N + " · " + m(a) + " · " + m(b) + ")";
+      kl.push("K_{l} · K_{β} = " + Spl + " = " + fx(R.Kpl, 4, 4));
+      kl.push("K_{δ} = H_{шт} / Σh_{м} = " + m(G.Hsh) + " / (" + n + " · " + m(h) + ") = " + fx(R.Kd, 4, 4) + "   (1.11)");
+      kl.push("K_{ук} = " + fx(R.Kpl, 4, 4) + " · " + fx(R.Kd, 4, 4) + " = " + fx(r4(R.Kpl) * r4(R.Kd), 4, 4) + "   (1.8)");
+      kp.push("Ящики в ярусе стоят блоками, поэтому коэффициенты по длине и ширине объединены — это отношение площади штабеля к площади, занятой ящиками; по высоте K_{δ} учитывает доски.");
+    }
+    S({ title: "Коэффициент укладки груза", paras: ["Коэффициент укладки — отношение объёма штабеля к сумме габаритных объёмов мест; учитывает доски между ярусами и промежутки внутри штабеля."],
+      lines: kl.slice(0, 1), answer: "K_{ук} = " + fx(R.Kuk, 3, 3) });
+    S({ title: "Проверка коэффициента укладки по линейным коэффициентам", paras: kp, lines: kl.slice(1) });
+    /* 2.8 */
+    S({ title: "Трюмный коэффициент", paras: ["Трюмный коэффициент — отношение объёма свободного пространства к объёму штабеля; учитывает объём у переборки, у борта и под палубой, который не занят штабелем."],
+      lines: ["K_{тр} = V_{св} / V_{шт} = " + m3(R.Vsv) + " / " + m3(R.Vsh) + " = " + fx(R.Ktr, 3, 3)], answer: "K_{тр} = " + fx(R.Ktr, 3, 3) });
+    /* 2.9 */
+    var um = R.Vm / 1e9 / (G.q / 1000);
+    S({ title: "Удельный погрузочный объём груза",
+      lines: ["u = V_{шт} / Q = " + m3(R.Vsh) + " / " + fx(R.Q, 3, 1) + " = " + fx(R.u, 3, 3) + " м³/т   (1.7)",
+        "μ = u · K_{тр} = V_{св} / Q = " + m3(R.Vsv) + " / " + fx(R.Q, 3, 1) + " = " + fx(R.mu, 2, 2) + " м³/т   (1.17)"],
+      after: ["Проверка: μ = u_{м} · K_{ук} · K_{тр} = " + fx(um, 3, 1) + " · " + fx(R.Kuk, 3, 3) + " · " + fx(R.Ktr, 3, 3) + " ≈ " + fx(um * Math.round(R.Kuk * 1000) / 1000 * Math.round(R.Ktr * 1000) / 1000, 2, 2) + " м³/т; " +
+        "по (1.18) в свободное пространство войдёт Q = V_{св} / μ = " + m3(R.Vsv) + " / " + fx(R.mu, 2, 2) + " ≈ " + fx(R.Vsv / 1e9 / (Math.round(R.mu * 100) / 100), 1, 1) + " т — совпадает с рассчитанной массой груза."],
+      figs: ["iso"], answer: "μ = " + fx(R.mu, 2, 2) + " м³/т" });
+    /* 2.10 */
+    var bl = ["V_{св} = ΣV_{м} + V_{дос} + V_{пром} + V_{нар}"];
+    if (nd) bl.push("V_{дос} = n_{д} · L_{шт} · B_{шт} · δ_{д} = " + nd + " · " + m(R.Lsh) + " · " + m(R.Bsh) + " · " + m(G.bt) + " = " + m3(R.Vdos) + " м³");
+    bl.push("V_{пром} = " + (same || I.n === II.n ? "n · (L_{шт} · B_{шт} − N_{я} · l_{м} · b_{м}) · h_{м} = " + n + " · (" + m2(R.S) + " − " + I.n + " · " + m2(a * b) + ") · " + m(h) :
+      R.n1 + " · (" + m2(R.S) + " − " + I.n + " · " + m2(a * b) + ") · " + m(h) + " + " + R.n2 + " · (" + m2(R.S) + " − " + II.n + " · " + m2(a * b) + ") · " + m(h)) + " = " + m3(R.Vprom) + " м³");
+    bl.push("V_{нар} = V_{св} − V_{шт} = " + m3(R.Vsv) + " − " + m3(R.Vsh) + " = " + m3(R.Vnar) + " м³");
+    var parts = [];
+    if (R.Vend > 0) parts.push("у переборки (L − L_{шт}) · B · H_{шт} = " + m(G.L - R.Lsh) + " · " + m(G.B) + " · " + m(G.Hsh) + " = " + m3(R.Vend) + " м³");
+    if (R.Vside > 0) parts.push("у борта L_{шт} · (B − B_{шт}) · H_{шт} = " + m(R.Lsh) + " · " + m(G.B - R.Bsh) + " · " + m(G.Hsh) + " = " + m3(R.Vside) + " м³");
+    if (R.Vtop > 0) parts.push("под палубой L · B · Δh = " + m(G.L) + " · " + m(G.B) + " · " + m(G.H - G.Hsh) + " = " + m3(R.Vtop) + " м³");
+    var tot = R.sumV + R.Vdos + R.Vprom + R.Vnar, dun = R.Vprom + R.Vnar;
+    bl.push("Σ = " + m3(R.sumV) + (nd ? " + " + m3(R.Vdos) : "") + " + " + m3(R.Vprom) + " + " + m3(R.Vnar) + " = " + m3(tot) + " м³ = V_{св}");
+    S({ title: "Баланс объёма свободного пространства", lines: bl,
+      after: (parts.length ? ["Вне штабеля: " + parts.join("; ") + "."] : []).concat(["Все промежутки заполняются прокладочным материалом (доски, деннажные подушки): V_{пром} + V_{нар} = " + m3(dun) + " м³ (" + fx(dun / R.Vsv * 100, 1, 1) + " % V_{св})" + (R.Vprom === 0 ? "; внутри штабеля промежутков нет." : ".")]),
+      answer: "прокладочного материала " + m3(dun) + " м³" });
+    /* 2.11 */
+    var cmpRow = function (X, nm, key) {
+      return [nm + (key === mode ? " — принята" : ""), X.same || X.I.n === X.II.n ? String(X.I.n) : X.I.n + " / " + X.II.n, String(X.N), fx(X.Q, 3, 1), fx(X.Kuk, 3, 3), fx(X.Ktr, 3, 3), fx(X.mu, 2, 2)];
+    };
+    var cmp = [cmpRow(Rb, "Наилучшая", "best"), cmpRow(Rr, "Ярусы через один на 90° (образец)", "rot"), cmpRow(Ro, "Один на один", "one")];
+    var cmpAfter = [];
+    if (Rb.N > Rr.N) cmpAfter.push("Наилучшая укладка размещает на " + (Rb.N - Rr.N) + " " + App.plural(Rb.N - Rr.N, "ящик", "ящика", "ящиков") + " (" + fx((Rb.Q - Rr.Q), 3, 1) + " т) больше, чем схема образца; удельный погрузочный объём меньше на " + fx((Rr.mu - Rb.mu) / Rr.mu * 100, 1, 1) + " %.");
+    else cmpAfter.push("При этих размерах все схемы размещают одинаковое число ящиков.");
+    cmpAfter.push("Чем меньше μ, тем полнее используется объём трюма: из трёх схем наименьший μ = " + fx(Rb.mu, 2, 2) + " м³/т даёт наилучшая укладка.");
+    S({ title: "Сравнение схем укладки", lines: [],
+      tables: [{ title: "Таблица 2.2 — Результаты для разных схем укладки", headers: ["Схема", "Ящиков в ярусе", "N, шт.", "Q, т", "K_{ук}", "K_{тр}", "μ, м³/т"], rows: cmp, widths: [5.6, 2.2, 1.5, 1.6, 1.8, 1.8, 2.0], lefts: [0] }],
+      after: cmpAfter });
+
+    /* контрольные вопросы — на экране всегда, в отчёте по выбору */
+    st.push({ no: "К", noLabel: "", title: "Контрольные вопросы (к защите)", lines: [], paras: QA.map(function (q, i) { return (i + 1) + ". " + q[0] + ". " + q[1]; }), kind: "qa" });
+
+    var summary = [
+      ["Объём свободного пространства", "V_{св} = L · B · H", m3(R.Vsv), "м³"],
+      ["Объём грузового места", "V_{м} = l_{м} · b_{м} · h_{м}", m3(R.Vm), "м³"],
+      ["Ящиков в ярусе", same ? "N_{я}" : "N_{неч} / N_{чёт}", same ? String(I.n) : I.n + " / " + II.n, "шт."],
+      ["Число ярусов / настилов досок", "n / n_{д}", n + " / " + nd, "—"],
+      ["Всего ящиков", "N", String(R.N), "шт."],
+      ["Масса груза", "Q = N · q_{м}", fx(R.Q, 3, 1), "т"],
+      ["Объём грузовых мест", "ΣV_{м} = N · V_{м}", m3(R.sumV), "м³"],
+      ["Объём штабеля", "V_{шт} = L_{шт} · B_{шт} · H_{шт}", m3(R.Vsh), "м³"],
+      ["Коэффициент укладки", "K_{ук} = V_{шт} / ΣV_{м}", fx(R.Kuk, 3, 3), "—"],
+      ["Трюмный коэффициент", "K_{тр} = V_{св} / V_{шт}", fx(R.Ktr, 3, 3), "—"],
+      ["Удельный погрузочный объём", "μ = u · K_{тр} = V_{св} / Q", fx(R.mu, 2, 2), "м³/т"]
+    ];
+    var answer = "K_{ук} = " + fx(R.Kuk, 3, 3) + "; K_{тр} = " + fx(R.Ktr, 3, 3) + "; μ = " + fx(R.mu, 2, 2) + " м³/т.";
+    var answer2 = "В свободное пространство " + m(G.L) + " × " + m(G.B) + " × " + m(G.H) + " м трюма № " + hold + " укладывается " + R.N + " " + App.plural(R.N, "ящик", "ящика", "ящиков") + " (" + n + " " + App.plural(n, "ярус", "яруса", "ярусов") +
+      (same || I.n === II.n ? " по " + I.n + " шт." : ": " + I.n + " и " + II.n + " шт. через один") + ") массой " + fx(R.Q, 3, 1) + " т.";
+    return { steps: st, warn: warn, G: G, R: R, Rb: Rb, mode: mode, summary: summary, answer: answer, answer2: answer2, bound: bound };
+  }
+
+  /* ======================================================================
+     Схемы
+     ====================================================================== */
+  var FONT = '"Times New Roman","Liberation Serif",Times,serif';
+  function hex2rgb(h) { h = String(h).replace("#", ""); if (h.length === 3) h = h.split("").map(function (c) { return c + c; }).join(""); var v = parseInt(h, 16); return [(v >> 16) & 255, (v >> 8) & 255, v & 255]; }
+  function mix(hex, k) {
+    var c = hex2rgb(hex), t = k > 0 ? 255 : 0, a = Math.abs(k);
+    return "#" + c.map(function (x) { var v = Math.round(x + (t - x) * a); return (v < 16 ? "0" : "") + v.toString(16); }).join("");
+  }
+  function colors(LK) {
+    var pal = (LK && LK.palette) || ["#F0E2D2", "#F6E3B4", "#CFE3B8"];
+    return { boxB: pal[1], boxL: mix(pal[1], -0.13), stroke: "#4a3a22", board: "#8a5a2b", boardEdge: "#5a3818", dun: pal[2], dunLine: mix(pal[2], -0.38), env: "#8b1e1e" };
+  }
+  function cvSet(cv, W, H) { cv.width = W; cv.height = H; var c = cv.getContext("2d"); c.fillStyle = "#fff"; c.fillRect(0, 0, W, H); c.lineJoin = "round"; return c; }
+  function tx(c, s, x, y, o) {
+    o = o || {}; var size = o.size || 28;
+    var parts = String(s).split(/(_\{[^}]*\})/).filter(function (p) { return p !== ""; });
+    function fnt(sub) { return (o.italic ? "italic " : "") + (o.bold ? "bold " : "") + (sub ? Math.round(size * 0.72) : size) + "px " + FONT; }
+    var w = 0, seg = parts.map(function (p) { var sub = /^_\{/.test(p), t = sub ? p.slice(2, -1) : p; c.font = fnt(sub); var ww = c.measureText(t).width; w += ww; return { t: t, sub: sub, w: ww }; });
+    c.save(); c.translate(x, y); if (o.rot) c.rotate(o.rot);
+    var x0 = o.align === "left" ? 0 : o.align === "right" ? -w : -w / 2;
+    if (o.bg) { c.fillStyle = o.bg; c.fillRect(x0 - 6, -size * 0.66, w + 12, size * 1.32); }
+    c.fillStyle = o.color || "#111"; c.textBaseline = "middle"; c.textAlign = "left";
+    seg.forEach(function (sg) { c.font = fnt(sg.sub); c.fillText(sg.t, x0, sg.sub ? size * 0.3 : 0); x0 += sg.w; });
+    c.restore();
+    return w;
+  }
+  function ln(c, pts, w, col, dash) {
+    c.beginPath(); pts.forEach(function (p, i) { if (i) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); });
+    c.lineWidth = w || 1; c.strokeStyle = col || "#111"; c.setLineDash(dash || []); c.stroke(); c.setLineDash([]);
+  }
+  function head(c, x, y, ang, sz) {
+    c.beginPath(); c.moveTo(x, y);
+    c.lineTo(x - sz * Math.cos(ang - 0.28), y - sz * Math.sin(ang - 0.28)); c.lineTo(x - sz * Math.cos(ang + 0.28), y - sz * Math.sin(ang + 0.28));
+    c.closePath(); c.fillStyle = "#111"; c.fill();
+  }
+  /* размерная линия p1–p2 с подписью (выносные линии — снаружи) */
+  function dim(c, p1, p2, label, o) {
+    o = o || {};
+    var ang = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]), len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]), A = 15;
+    if (len < 2 * A + 6) {
+      ln(c, [[p1[0] - (A + 14) * Math.cos(ang), p1[1] - (A + 14) * Math.sin(ang)], [p2[0] + (A + 14) * Math.cos(ang), p2[1] + (A + 14) * Math.sin(ang)]], 1.5);
+      head(c, p1[0], p1[1], ang, A); head(c, p2[0], p2[1], ang + Math.PI, A);
+    } else { ln(c, [p1, p2], 1.5); head(c, p2[0], p2[1], ang, A); head(c, p1[0], p1[1], ang + Math.PI, A); }
+    var rot = ang; if (rot > Math.PI / 2 + 1e-6) rot -= Math.PI; if (rot < -Math.PI / 2 - 1e-6) rot += Math.PI;
+    var g = o.gap === undefined ? 17 : o.gap, nx = Math.sin(rot), ny = -Math.cos(rot);
+    var mx = (p1[0] + p2[0]) / 2, my = (p1[1] + p2[1]) / 2;
+    if (o.shift) { mx += o.shift * Math.cos(rot); my += o.shift * Math.sin(rot); }
+    tx(c, label, mx + nx * g, my + ny * g, { size: o.size || 25, rot: rot, bold: o.bold });
+  }
+  function hatchRect(c, x, y, w, hgt, C) {
+    if (w <= 0 || hgt <= 0) return;
+    c.save(); c.fillStyle = C.dun; c.fillRect(x, y, w, hgt);
+    c.beginPath(); c.rect(x, y, w, hgt); c.clip();
+    c.beginPath(); for (var t = -hgt; t < w; t += 13) { c.moveTo(x + t, y + hgt); c.lineTo(x + t + hgt, y); }
+    c.lineWidth = 1; c.strokeStyle = C.dunLine; c.stroke(); c.restore();
+  }
+  function legend(c, items, x, y, size) {
+    var cx = x;
+    items.forEach(function (it) {
+      if (it.k === "dun") hatchRect(c, cx, y - 13, 44, 26, it.C); else { c.fillStyle = it.fill; c.fillRect(cx, y - 13, 44, 26); }
+      if (it.k === "env") { c.fillStyle = "#fff"; c.fillRect(cx, y - 13, 44, 26); ln(c, [[cx, y], [cx + 44, y]], 2.5, it.C.env, [10, 6]); }
+      else { c.lineWidth = 1.4; c.strokeStyle = "#333"; c.strokeRect(cx, y - 13, 44, 26); }
+      cx += 56 + tx(c, it.t, cx + 56, y, { size: size || 24, align: "left" }) + 38;
+    });
+    return cx - x;
+  }
+  function legendItems(C, d, withBoard, withEnv) {
+    var G = d.G, a = m(G.a), b = m(G.b), hh = m(G.h);
+    var it = [{ fill: C.boxB, t: "ящик " + a + " × " + b + " × " + hh + " м, сторона " + a + " м вдоль B" }, { fill: C.boxL, t: "то же, " + a + " м вдоль L" }];
+    if (withBoard && G.nd) it.push({ fill: C.board, t: "доска " + fx(G.bt, 0, 0) + " мм" });
+    it.push({ k: "dun", C: C, t: "прокладочный материал" });
+    if (withEnv) it.push({ k: "env", C: C, t: "граница штабеля" });
+    return it;
+  }
+  function drawLegend(c, items, W, y, size) {
+    var probe = document.createElement("canvas").getContext("2d"), w = 0;
+    probe.font = (size || 24) + "px " + FONT;
+    items.forEach(function (it) { w += 56 + probe.measureText(it.t).width + 38; });
+    w -= 38;
+    if (w > W - 40) {   // в две строки
+      var h1 = Math.ceil(items.length / 2);
+      drawLegend(c, items.slice(0, h1), W, y - 19, size); drawLegend(c, items.slice(h1), W, y + 19, size); return;
+    }
+    legend(c, items, Math.max(20, (W - w) / 2), y, size);
+  }
+
+  /* --- Рис. 1: вид сверху по ярусам --- */
+  function drawPlan(cv, LK, d, r) {
+    var R = r.R, G = r.G, C = colors(LK), lays = R.same ? [R.I] : [R.I, R.II], np = lays.length;
+    var Lm = G.L / 1000, Bm = G.B / 1000, W = 1600, padL = 150, padR = 160, gap = 230, padT = 210, padB = 210;
+    var s = Math.min((W - padL - padR - gap * (np - 1)) / (np * Lm), 760 / Bm);
+    var H = Math.round(padT + Bm * s + padB), c = cvSet(cv, W, H); cv._cm = 16.5;
+    var used = np * Lm * s + gap * (np - 1), ox0 = padL + (W - padL - padR - used) / 2, oy = padT + Bm * s;
+    var env = R.Lsh < G.L || R.Bsh < G.B;
+    lays.forEach(function (lay, k) {
+      var ox = ox0 + k * (Lm * s + gap);
+      var X = function (x) { return ox + x / 1000 * s; }, Y = function (y) { return oy - y / 1000 * s; };
+      hatchRect(c, ox, Y(G.B), Lm * s, Bm * s, C);
+      lay.boxes.forEach(function (q) {
+        c.fillStyle = q.o === "L" ? C.boxL : C.boxB; c.fillRect(X(q.x0), Y(q.y1), (q.x1 - q.x0) / 1000 * s, (q.y1 - q.y0) / 1000 * s);
+        c.lineWidth = 1.3; c.strokeStyle = C.stroke; c.strokeRect(X(q.x0), Y(q.y1), (q.x1 - q.x0) / 1000 * s, (q.y1 - q.y0) / 1000 * s);
+      });
+      if (env) ln(c, [[X(0), Y(R.Bsh)], [X(R.Lsh), Y(R.Bsh)], [X(R.Lsh), Y(0)]], 3, C.env, [12, 7]);
+      lay.blocks.forEach(function (bl) {
+        var wp = bl.w / 1000 * s, hp = bl.h / 1000 * s, cx = X(bl.x + bl.w / 2), cy = Y(bl.y + bl.h / 2);
+        var l1 = bl.nx + " × " + bl.ny + " = " + bl.nx * bl.ny, l2 = m(bl.w) + " × " + m(bl.h) + " м";
+        if (wp > 190 && hp > 84) { tx(c, l1, cx, cy - 17, { size: 26, bold: true, bg: "rgba(255,255,255,0.88)" }); tx(c, l2, cx, cy + 18, { size: 22, bg: "rgba(255,255,255,0.88)" }); }
+        else if (wp > 130 && hp > 40) tx(c, l1, cx, cy, { size: 24, bold: true, bg: "rgba(255,255,255,0.88)" });
+        else if (hp > 130 && wp > 40) tx(c, l1, cx, cy, { size: 24, bold: true, bg: "rgba(255,255,255,0.88)", rot: -Math.PI / 2 });
+      });
+      c.lineWidth = 4; c.strokeStyle = "#111"; c.strokeRect(ox, Y(G.B), Lm * s, Bm * s);
+      /* размеры по длине — сверху */
+      var yT = Y(G.B), oT = R.Lsh < G.L ? 104 : 50;
+      ln(c, [[X(0), yT - 6], [X(0), yT - oT - 8]], 1); ln(c, [[X(G.L), yT - 6], [X(G.L), yT - oT - 8]], 1);
+      if (R.Lsh < G.L) {
+        ln(c, [[X(R.Lsh), yT - 6], [X(R.Lsh), yT - 58]], 1);
+        dim(c, [X(0), yT - 50], [X(R.Lsh), yT - 50], "L_{шт} = " + m(R.Lsh));
+        dim(c, [X(R.Lsh), yT - 50], [X(G.L), yT - 50], m(G.L - R.Lsh), { size: 22, shift: (G.L - R.Lsh) / 1000 * s < 70 ? 36 : 0 });
+      }
+      dim(c, [X(0), yT - oT], [X(G.L), yT - oT], "L = " + m(G.L) + " м", { bold: true });
+      /* размеры по ширине — справа */
+      var xR = X(G.L), oR = R.Bsh < G.B ? 104 : 50;
+      ln(c, [[xR + 6, Y(0)], [xR + oR + 8, Y(0)]], 1); ln(c, [[xR + 6, Y(G.B)], [xR + oR + 8, Y(G.B)]], 1);
+      if (R.Bsh < G.B) {
+        ln(c, [[xR + 6, Y(R.Bsh)], [xR + 58, Y(R.Bsh)]], 1);
+        dim(c, [xR + 50, Y(0)], [xR + 50, Y(R.Bsh)], "B_{шт} = " + m(R.Bsh));
+        dim(c, [xR + 50, Y(R.Bsh)], [xR + 50, Y(G.B)], m(G.B - R.Bsh), { size: 22, shift: (G.B - R.Bsh) / 1000 * s < 70 ? -36 : 0 });
+      }
+      dim(c, [xR + oR, Y(0)], [xR + oR, Y(G.B)], "B = " + m(G.B) + " м", { bold: true });
+      /* заголовок панели */
+      var ttl = R.same ? "Все ярусы (1–" + G.n + ") · " + lay.n + " шт. в ярусе" : "Ярусы " + tierList(k + 1, G.n) + " · " + lay.n + " шт.";
+      tx(c, ttl, ox + Lm * s / 2, padT - 160, { size: 30, bold: true });
+      /* стрелки взгляда — на первой панели */
+      if (k === 0) {
+        var ax = X(Math.min(G.L, R.Lsh) * 0.5);
+        ln(c, [[ax, oy + 100], [ax, oy + 26]], 3); head(c, ax, oy + 20, -Math.PI / 2, 20); tx(c, "А", ax + 26, oy + 74, { size: 32, bold: true });
+        var ay = Y(Math.min(G.B, R.Bsh) * 0.5);
+        ln(c, [[ox - 100, ay], [ox - 26, ay]], 3); head(c, ox - 20, ay, 0, 20); tx(c, "Б", ox - 74, ay - 26, { size: 32, bold: true });
+      }
+    });
+    drawLegend(c, legendItems(C, r, false, env), W, H - 52, 24);
+  }
+
+  /* --- Рис. 2: вид сбоку (по стрелке А) и вид с торца (по стрелке Б) --- */
+  function drawSide(cv, LK, d, r) {
+    var R = r.R, G = r.G, C = colors(LK);
+    var Lm = G.L / 1000, Bm = G.B / 1000, Hm = G.H / 1000, W = 1600, padL = 150, gap = 280, padR = 190, padT = 120, padB = 220;
+    var s = Math.min((W - padL - gap - padR) / (Lm + Bm), 700 / Hm);
+    var H = Math.round(padT + Hm * s + padB), c = cvSet(cv, W, H); cv._cm = 16.5;
+    var used = (Lm + Bm) * s + gap, ox1 = padL + (W - padL - padR - used) / 2, ox2 = ox1 + Lm * s + gap, oy = padT + Hm * s;
+    var Z = function (z) { return oy - z / 1000 * s; };
+    [["side", ox1], ["end", ox2]].forEach(function (pp) {
+      var kind = pp[0], ox = pp[1], span = kind === "side" ? G.L : G.B, sh = kind === "side" ? R.Lsh : R.Bsh;
+      var U = function (u) { return kind === "side" ? ox + u / 1000 * s : ox + (span - u) / 1000 * s; };
+      var spx = span / 1000 * s;
+      hatchRect(c, ox, Z(G.H), spx, G.H / 1000 * s, C);
+      for (var t = 1; t <= G.n; t++) {
+        var lay = t % 2 ? R.I : R.II, z0 = G.z0[t];
+        lay.boxes.forEach(function (q) {
+          if (kind === "side" ? q.y0 !== 0 : q.x0 !== 0) return;
+          var u0 = kind === "side" ? q.x0 : q.y0, u1 = kind === "side" ? q.x1 : q.y1, xa = Math.min(U(u0), U(u1)), w = Math.abs(U(u1) - U(u0));
+          c.fillStyle = q.o === "L" ? C.boxL : C.boxB; c.fillRect(xa, Z(z0 + G.h), w, G.h / 1000 * s);
+          c.lineWidth = 1.3; c.strokeStyle = C.stroke; c.strokeRect(xa, Z(z0 + G.h), w, G.h / 1000 * s);
+        });
+        if (kind === "side") tx(c, String(t), ox - 26, Z(z0 + G.h / 2), { size: 23, bold: true });
+      }
+      for (var j = 1; j <= G.nd; j++) {
+        var zb = G.zb[j], hp = Math.max(G.bt / 1000 * s, 6), yc = (Z(zb) + Z(zb + G.bt)) / 2, xa2 = Math.min(U(0), U(sh));
+        c.fillStyle = C.board; c.fillRect(xa2, yc - hp / 2, sh / 1000 * s, hp);
+        c.lineWidth = 1; c.strokeStyle = C.boardEdge; c.strokeRect(xa2, yc - hp / 2, sh / 1000 * s, hp);
+      }
+      c.lineWidth = 4; c.strokeStyle = "#111"; c.strokeRect(ox, Z(G.H), spx, G.H / 1000 * s);
+      /* размеры снизу */
+      var yB = oy, oB = sh < span ? 104 : 50;
+      [0, span].forEach(function (u) { ln(c, [[U(u), yB + 6], [U(u), yB + oB + 8]], 1); });
+      if (sh < span) {
+        ln(c, [[U(sh), yB + 6], [U(sh), yB + 58]], 1);
+        var tiny = (span - sh) / 1000 * s < 70;
+        dim(c, [Math.min(U(0), U(sh)), yB + 50], [Math.max(U(0), U(sh)), yB + 50], (kind === "side" ? "L" : "B") + "_{шт} = " + m(sh), { gap: -17 });
+        dim(c, [Math.min(U(sh), U(span)), yB + 50], [Math.max(U(sh), U(span)), yB + 50], m(span - sh), { gap: -17, size: 22, shift: tiny ? (kind === "side" ? 36 : -36) : 0 });
+      }
+      dim(c, [ox, yB + oB], [ox + spx, yB + oB], (kind === "side" ? "L = " : "B = ") + m(span) + " м", { gap: -18, bold: true });
+      /* размеры справа: H_шт, Δh, H */
+      var xR = ox + spx;
+      [0, G.H].forEach(function (z) { ln(c, [[xR + 6, Z(z)], [xR + 112, Z(z)]], 1); });
+      ln(c, [[xR + 6, Z(G.Hsh)], [xR + 58, Z(G.Hsh)]], 1);
+      dim(c, [xR + 50, Z(0)], [xR + 50, Z(G.Hsh)], "H_{шт} = " + m(G.Hsh));
+      if (G.H > G.Hsh) {
+        var tinyH = (G.H - G.Hsh) / 1000 * s < 70;
+        if (!tinyH) dim(c, [xR + 50, Z(G.Hsh)], [xR + 50, Z(G.H)], "Δh = " + m(G.H - G.Hsh), { size: 21 });
+        else {
+          dim(c, [xR + 50, Z(G.Hsh)], [xR + 50, Z(G.H)], "", {});
+          if (kind === "side") tx(c, "Δh = " + m(G.H - G.Hsh), xR + 120, Z((G.H + G.Hsh) / 2), { size: 21, align: "left" });
+        }
+      }
+      dim(c, [xR + 104, Z(0)], [xR + 104, Z(G.H)], "H = " + m(G.H) + " м", { bold: true });
+      if (kind === "side") {
+        ln(c, [[ox - 50, Z(0)], [ox - 82, Z(0)]], 1); ln(c, [[ox - 50, Z(G.h)], [ox - 82, Z(G.h)]], 1);
+        dim(c, [ox - 72, Z(0)], [ox - 72, Z(G.h)], m(G.h), { size: 21, gap: 15 });
+      }
+      tx(c, kind === "side" ? "Вид сбоку (по стрелке А)" : "Вид с торца (по стрелке Б)", ox + spx / 2, padT - 70, { size: 29, bold: true });
+    });
+    drawLegend(c, legendItems(C, r, true, false), W, H - 40, 24);
+  }
+
+  /* --- Рис. 3: аксонометрия --- */
+  function drawIso(cv, LK, d, r) {
+    var R = r.R, G = r.G, C = colors(LK);
+    var Lm = G.L / 1000, Bm = G.B / 1000, Hm = G.H / 1000, Ls = R.Lsh / 1000, Bs = R.Bsh / 1000, Hs = G.Hsh / 1000;
+    var W = 1500, mL = 230, mR = 150, mT = 150, mB = 150, c30 = Math.cos(Math.PI / 6);
+    var s = Math.min((W - mL - mR) / ((Lm + Bm) * c30), 130);
+    var H = Math.round(mT + ((Lm + Bm) / 2 + Hm) * s + mB), c = cvSet(cv, W, H); cv._cm = 15;
+    var X0 = mL + Bm * c30 * s + ((W - mL - mR) - (Lm + Bm) * c30 * s) / 2, Y0 = mT + ((Lm + Bm) / 2 + Hm) * s;
+    function P(x, y, z) { return [X0 + (x - y) * c30 * s, Y0 - ((x + y) / 2 + z) * s]; }
+    function poly(pts, fill, stroke, lw) {
+      c.beginPath(); pts.forEach(function (p, i) { if (i) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); }); c.closePath();
+      if (fill) { c.fillStyle = fill; c.fill(); }
+      if (stroke) { c.lineWidth = lw || 1; c.strokeStyle = stroke; c.stroke(); }
+    }
+    function hatchFaces(x0, y0, z0, x1, y1, z1, faces, step) {
+      c.beginPath(); var v;
+      if (faces.indexOf("x") >= 0) for (v = y0 + step; v < y1 - 1e-9; v += step) { var a1 = P(x0, v, z0), b1 = P(x0, v, z1); c.moveTo(a1[0], a1[1]); c.lineTo(b1[0], b1[1]); }
+      if (faces.indexOf("y") >= 0) for (v = x0 + step; v < x1 - 1e-9; v += step) { var a2 = P(v, y0, z0), b2 = P(v, y0, z1); c.moveTo(a2[0], a2[1]); c.lineTo(b2[0], b2[1]); }
+      if (faces.indexOf("z") >= 0) for (v = x0 + step; v < x1 - 1e-9; v += step) { var a3 = P(v, y0, z1), b3 = P(v, y1, z1); c.moveTo(a3[0], a3[1]); c.lineTo(b3[0], b3[1]); }
+      c.lineWidth = 1; c.strokeStyle = C.dunLine; c.stroke();
+    }
+    function cub(x0, y0, z0, x1, y1, z1, col, st, lw, dun) {
+      if (x1 - x0 <= 1e-9 || y1 - y0 <= 1e-9 || z1 - z0 <= 1e-9) return;
+      poly([P(x0, y0, z1), P(x1, y0, z1), P(x1, y1, z1), P(x0, y1, z1)], mix(col, 0.25), st, lw);
+      poly([P(x0, y0, z0), P(x0, y1, z0), P(x0, y1, z1), P(x0, y0, z1)], col, st, lw);
+      poly([P(x0, y0, z0), P(x1, y0, z0), P(x1, y0, z1), P(x0, y0, z1)], mix(col, -0.12), st, lw);
+      if (dun) hatchFaces(x0, y0, z0, x1, y1, z1, "xyz", 0.1);
+    }
+    /* невидимые рёбра трюма */
+    ln(c, [P(Lm, Bm, 0), P(Lm, 0, 0)], 1.4, "#555", [9, 7]); ln(c, [P(Lm, Bm, 0), P(0, Bm, 0)], 1.4, "#555", [9, 7]); ln(c, [P(Lm, Bm, 0), P(Lm, Bm, Hm)], 1.4, "#555", [9, 7]);
+    /* прокладочный материал у переборки и у борта (дальние) */
+    if (Lm > Ls) cub(Ls, 0, 0, Lm, Bm, Hs, C.dun, C.dunLine, 1, true);
+    if (Bm > Bs) cub(0, Bs, 0, Ls, Bm, Hs, C.dun, C.dunLine, 1, true);
+    /* штабель по ярусам */
+    for (var t = 1; t <= G.n; t++) {
+      var lay = t % 2 ? R.I : R.II, gaps = t % 2 ? R.gapsI : R.gapsII, z0 = G.z0[t] / 1000, z1 = z0 + G.h / 1000;
+      var items = lay.boxes.map(function (q) { return { b: q, g: false }; }).concat(gaps.map(function (q) { return { b: q, g: true }; }));
+      items.sort(function (p, q) { return (q.b.x0 + q.b.x1 + q.b.y0 + q.b.y1) - (p.b.x0 + p.b.x1 + p.b.y0 + p.b.y1); });
+      items.forEach(function (it) {
+        var q = it.b;
+        if (it.g) cub(q.x0 / 1000, q.y0 / 1000, z0, q.x1 / 1000, q.y1 / 1000, z1, C.dun, C.dunLine, 1, true);
+        else cub(q.x0 / 1000, q.y0 / 1000, z0, q.x1 / 1000, q.y1 / 1000, z1, q.o === "L" ? C.boxL : C.boxB, C.stroke, 1.1);
+      });
+      if (G.nd && t % G.k === 0 && t < G.n) { var zb = G.zb[t / G.k] / 1000; cub(0, 0, zb, Ls, Bs, zb + G.bt / 1000, C.board, C.boardEdge, 1); }
+    }
+    /* кромки досок на видимых гранях */
+    for (var j = 1; j <= G.nd; j++) {
+      var zc = (G.zb[j] + G.bt / 2) / 1000;
+      ln(c, [P(0, Bs, zc), P(0, 0, zc), P(Ls, 0, zc)], 4, C.board);
+    }
+    /* прокладочный материал под палубой — полупрозрачный */
+    if (Hm > Hs) {
+      c.save(); c.globalAlpha = 0.42;
+      poly([P(0, 0, Hm), P(Lm, 0, Hm), P(Lm, Bm, Hm), P(0, Bm, Hm)], C.dun);
+      poly([P(0, 0, Hs), P(0, Bm, Hs), P(0, Bm, Hm), P(0, 0, Hm)], C.dun);
+      poly([P(0, 0, Hs), P(Lm, 0, Hs), P(Lm, 0, Hm), P(0, 0, Hm)], mix(C.dun, -0.1));
+      c.globalAlpha = 0.5; hatchFaces(0, 0, Hs, Lm, Bm, Hm, "xyz", 0.1); c.restore();
+      ln(c, [P(0, Bm, Hs), P(0, 0, Hs), P(Lm, 0, Hs)], 1.5, C.dunLine);
+    }
+    /* видимые рёбра трюма */
+    var hw = 3.2;
+    ln(c, [P(0, 0, 0), P(Lm, 0, 0), P(Lm, 0, Hm), P(Lm, Bm, Hm), P(0, Bm, Hm), P(0, Bm, 0), P(0, 0, 0)], hw);
+    ln(c, [P(0, 0, 0), P(0, 0, Hm), P(Lm, 0, Hm)], hw); ln(c, [P(0, 0, Hm), P(0, Bm, Hm)], hw);
+    /* размеры */
+    var o = 0.75;
+    ln(c, [P(0, -0.08, 0), P(0, -o - 0.12, 0)], 1); ln(c, [P(Lm, -0.08, 0), P(Lm, -o - 0.12, 0)], 1);
+    dim(c, P(0, -o, 0), P(Lm, -o, 0), "L = " + m(G.L) + " м", { bold: true, gap: -22, size: 27 });
+    ln(c, [P(-0.08, 0, 0), P(-o - 0.12, 0, 0)], 1); ln(c, [P(-0.08, Bm, 0), P(-o - 0.12, Bm, 0)], 1);
+    dim(c, P(-o, 0, 0), P(-o, Bm, 0), "B = " + m(G.B) + " м", { bold: true, gap: -22, size: 27 });
+    var hx = P(0, Bm, 0)[0] - 70;
+    ln(c, [[P(0, Bm, 0)[0] - 8, P(0, Bm, 0)[1]], [hx - 10, P(0, Bm, 0)[1]]], 1); ln(c, [[P(0, Bm, Hm)[0] - 8, P(0, Bm, Hm)[1]], [hx - 10, P(0, Bm, Hm)[1]]], 1);
+    dim(c, [hx, P(0, Bm, 0)[1]], [hx, P(0, Bm, Hm)[1]], "H = " + m(G.H) + " м", { bold: true, size: 27 });
+    /* подписи ярусов на левой грани */
+    for (var t2 = 1; t2 <= G.n; t2++) {
+      var pz = P(0, Bs, (G.z0[t2] + G.h / 2) / 1000);
+      if (Bs < Bm) continue;
+      tx(c, String(t2), pz[0] - 22, pz[1] + 6, { size: 21, bold: true, color: "#333" });
+    }
+    drawLegend(c, legendItems(C, r, true, false), W, 60, 24);
+  }
+
+  App.taskWork({
+    disc: "tomg", discName: "Технология и организация морской перевозки грузов", id: "tomg-lr2k", order: 2, key: "tomg-lr2k",
+    file: "ТМПГ_ЛР2_Коэффициент_укладки", no: "ЛР 2", short: "ЛР №2",
+    eyebrow: "ТОМПГ · Лабораторная работа №2", title: "Расчёт коэффициента укладки груза и удельного погрузочного объёма",
+    titleTopic: "Расчёт коэффициента укладки груза и удельного погрузочного объёма", titleKind: "Лабораторная работа",
+    desc: "Ящики 100×60×50 см в свободном пространстве трюма № 1 (варианты 1–28): наибольшее число мест в ярусе, доски через три яруса, Kук, Kтр, μ, баланс объёма, вид сверху, сбоку и аксонометрия.",
+    variants: NV, variantLabel: "Вариант (№ по списку)", defaultVariant: 1, summary: false, keep: ["mode", "qa"],
+    variantData: function (v) {
+      var x = VARS[+v] || VARS[1];
+      return { variant: String(+v || 1), L: fx(x[0], 1, 1), B: fx(x[1], 1, 1), H: fx(x[2], 1, 1), hold: "1", lc: "100", bc: "60", hc: "50", q: "50", bt: "2,5", bk: "3", mode: "best", qa: "0" };
+    },
+    hint: "Вариант — номер по списку (таблица методички «Размеры свободного пространства в трюме»). Размеры можно поправить вручную. Схема укладки: «наилучшая» — максимум ящиков в ярусе (с доказательством), «как в образце» — ярусы через один повёрнуты на 90°, «один на один» — все ярусы одинаковы. В отчёте есть сравнение всех трёх схем.",
+    sections: [
+      { title: "Свободное пространство в трюме", fields: [["L", "Длина L", { num: true, unit: "м" }], ["B", "Ширина B", { num: true, unit: "м" }], ["H", "Высота H", { num: true, unit: "м" }], ["hold", "Трюм №"]] },
+      { title: "Груз и прокладочный материал", note: "Ящики без планок — K<sub>ф</sub> = 1. Знак «не кантовать»: ящик стоит на основании длина × ширина, высота места — третий размер.",
+        fields: [["lc", "Длина ящика", { num: true, unit: "см" }], ["bc", "Ширина ящика", { num: true, unit: "см" }], ["hc", "Высота ящика", { num: true, unit: "см" }], ["q", "Масса ящика", { num: true, unit: "кг" }],
+          ["bt", "Толщина досок", { num: true, unit: "см" }], ["bk", "Доски через, ярусов", { num: true }]] },
+      { title: "Схема и отчёт", fields: [["mode", "Схема укладки", { select: MODES, wide: true }], ["qa", "Ответы на контрольные вопросы в отчёте", { select: [["0", "нет"], ["1", "да"]] }]] }
+    ],
+    figs: {
+      plan: { caption: "Схема укладки ящиков по ярусам (вид сверху)", draw: drawPlan },
+      side: { caption: "Размещение ящиков по высоте: вид сбоку и вид с торца", draw: drawSide },
+      iso: { caption: "Укладка ящиков в свободном пространстве трюма (аксонометрия)", draw: drawIso }
+    },
+    solve: solve,
+    report: function (D, d, r, img) {
+      if (!r.R) { (r.warn || []).forEach(function (w) { D.text(w); }); return; }
+      var G = r.G, R = r.R;
+      D.text("Цель работы: ознакомиться с принципом классификации грузов по условиям их совместимости; определить коэффициент укладки груза K_{ук}, трюмный коэффициент K_{тр} и удельный погрузочный объём груза μ для заданного варианта загрузки трюма; составить схему размещения груза.", { after: 6 });
+      D.head("Исходные данные", { size: 13 });
+      D.text("В трюме № " + G.hold + " имеется свободное от других грузов пространство L × B × H = " + m(G.L) + " × " + m(G.B) + " × " + m(G.H) + " м, в которое размещаются ящики без планок (K_{ф} = 1). На ящики нанесён знак «не кантовать». Через каждые " + (G.k || 3) + " яруса по высоте прокладываются доски, свободные пространства заполняются прокладочным материалом (доски или деннажные подушки).");
+      D.table(["Величина", "Обозначение", "Значение"], [
+        ["Длина свободного пространства", "L", m(G.L) + " м"], ["Ширина свободного пространства", "B", m(G.B) + " м"], ["Высота свободного пространства", "H", m(G.H) + " м"],
+        ["Размеры ящика (длина × ширина × высота)", "l_{м} × b_{м} × h_{м}", m(G.a) + " × " + m(G.b) + " × " + m(G.h) + " м"], ["Масса ящика", "q_{м}", fx(G.q, 1, 0) + " кг"],
+        ["Коэффициент формы", "K_{ф}", "1"], ["Толщина досок / через сколько ярусов", "δ_{д} / k", (G.bOn ? m(G.bt) + " м / " + G.k : "нет")]
+      ], { widths: [8.6, 3.6, 4.3], size: 10.5, lefts: [0] });
+      var fig = 0, figNo = {};
+      function putFig(id) {
+        if (figNo[id]) return; figNo[id] = ++fig;
+        var cap = { plan: "Рисунок " + fig + " — Схема укладки ящиков по ярусам (вид сверху)", side: "Рисунок " + fig + " — Размещение ящиков по высоте: вид сбоку и вид с торца", iso: "Рисунок " + fig + " — Укладка ящиков в свободном пространстве трюма № " + G.hold + " (аксонометрия)" }[id];
+        img(id, { plan: 16.5, side: 16.5, iso: 14.5 }[id]);
+        D.para(cap, { align: "center", size: 10, after: 8 });
+      }
+      r.steps.forEach(function (s) {
+        if (s.kind === "qa") return;
+        if (s.kind === "compat") D.head("1. Классификация грузов по условиям совместимости", { size: 13 });
+        else {
+          if (s.no === "2.1") D.head("2. Расчёт коэффициентов укладки и удельного погрузочного объёма", { size: 13 });
+          D.sub(s.noLabel + s.title);
+        }
+        (s.paras || []).forEach(function (t) { D.text(t); });
+        s.lines.forEach(function (ln2) { D.formula(ln2); });
+        (s.tables || []).forEach(function (tb) { if (tb.title) D.para(tb.title, { size: 11, after: 2, keep: true }); D.table(tb.headers, tb.rows, { widths: tb.widths, size: 10, lefts: tb.lefts }); });
+        (s.after || []).forEach(function (t) { D.text(t); });
+        (s.figs || []).forEach(putFig);
+      });
+      D.head("Сводная таблица результатов", { size: 13 });
+      D.para("Таблица 2.3 — Результаты расчёта (схема: " + MODE_NAME[r.mode].toLowerCase() + ")", { size: 11, after: 2, keep: true });
+      D.table(["Величина", "Формула", "Значение", "Ед."], r.summary, { widths: [5.6, 6.2, 2.7, 2.0], size: 10, lefts: [0, 1] });
+      D.para([{ t: "Ответ: ", bold: true }, { t: r.answer, bold: true }], { before: 6, after: 2 });
+      D.text(r.answer2);
+      if (d.qa === "1") {
+        D.head("Ответы на контрольные вопросы", { size: 13 });
+        QA.forEach(function (q, i) { D.para([{ t: (i + 1) + ". " + q[0] + ". ", bold: true }, q[1]], { align: "just", after: 4 }); });
+      }
+    }
   });
 })();
 
