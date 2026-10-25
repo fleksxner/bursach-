@@ -12439,6 +12439,7 @@ var GMOS = (function () {
                  аналитическая проверка.
    ЛР №2 «Влияние гидродинамических сил на судно»: Ω, Xw, Yw, Nw (рис. 2.3, 2.5), волнение (рис. 2.7).
    ЛР №3 «Определение сопротивления воды при отсутствии волнения»: R0 (3.1), η Лаппа (3.2), R = R0(V/V0)² (3.3).
+   ЛР №4 «Уточнённый способ расчёта сопротивления корпуса судна давлению воды»: Rf (4.3, табл. 4.1), Rr (4.4).
    Исходник: папка «мус/исходники приложения» (miyus.js — весь модуль МиУС).
    ====================================================================== */
 var MIYUS = (function () {
@@ -13737,8 +13738,208 @@ var MIYUS = (function () {
     solve: solve3s, report: report3
   });
 
+  /* ======================================================================
+     ЛР №4 «Уточнённый способ расчёта сопротивления корпуса судна давлению воды» (стр. 48–49)
+     Cb (4.1), Ω (4.2 — формула Семеки), Rf = f·ρ·Ω·V^1,83·10⁻⁵ (4.3, f — табл. 4.1),
+     Rr = 0,09·Cb·Δ·V⁴/Lbp² (4.4), R = Rf + Rr; сравнение с приближённым способом ЛР 3.
+     ====================================================================== */
+  var FTAB = [[30, 0.147], [40, 0.146], [50, 0.144], [60, 0.144], [70, 0.144], [80, 0.143], [90, 0.143], [100, 0.142], [110, 0.142], [120, 0.141], [130, 0.141], [140, 0.141],
+    [150, 0.141], [160, 0.140], [170, 0.140], [180, 0.140], [190, 0.140], [200, 0.139], [210, 0.139], [220, 0.139], [300, 0.135]];
+  function fOf(L) {
+    if (L <= FTAB[0][0]) return { f: FTAB[0][1], a: FTAB[0], b: FTAB[0], out: L < FTAB[0][0] };
+    if (L >= FTAB[FTAB.length - 1][0]) return { f: FTAB[FTAB.length - 1][1], a: FTAB[FTAB.length - 1], b: FTAB[FTAB.length - 1], out: L > FTAB[FTAB.length - 1][0] };
+    for (var i = 1; i < FTAB.length; i++) if (L <= FTAB[i][0] + 1e-9) {
+      var a = FTAB[i - 1], b = FTAB[i]; if (Math.abs(L - b[0]) < 1e-9) return { f: b[1], a: b, b: b };
+      return { f: a[1] + (b[1] - a[1]) * (L - a[0]) / (b[0] - a[0]), a: a, b: b };
+    }
+  }
+  function vd4(v) {
+    var s = shipOf(v), i = s.no - 1, d = vd3(v), st = App.store.get("miyus-lr3");
+    if (st && String(st.variant) === String(s.no)) ["Lpp", "Ne", "etaV", "etaR", "V0", "nPpx", "nMax", "nSel", "ks", "kn"].forEach(function (k) { if (st[k] !== undefined && st[k] !== "") d[k] = st[k]; });
+    return Object.assign(d, { B: f(s.B, 1), d: f(s.d, 1), disp: String(s.disp), rhoW: String(RHO_W[i]), cbMode: "f", cbA: f(CB_A[i], 2), om22: "s", fMode: "auto", fM: "" });
+  }
+  function solve4(d) {
+    var a3 = solve3(d), warn = a3.warn.slice();
+    var L = num(d.Lpp), B = num(d.B), dd = num(d.d), D = num(d.disp), rw = num(d.rhoW);
+    if (!a3.rows || ![L, B, dd, D, rw].every(isFinite)) { if (![L, B, dd, D, rw].every(isFinite)) warn.push("Заполните B, d, Δ и ρw."); return { steps: [], warn: warn }; }
+    var V = rnd(D / (rw / 1000), 0), CbF = rnd(V / (L * B * dd), 3), CbA = num(d.cbA), Cb = d.cbMode === "a" && isFinite(CbA) ? CbA : CbF, Bd = rnd(B / dd, 3), print = d.om22 === "p";
+    var Om = rnd(print ? L * dd * (1.97 + 1.37 * (Cb - 0.274 * Bd)) : L * dd * (1.97 + 1.37 * (Cb - 0.274) * Bd), 0);
+    var fo = fOf(L), fv = d.fMode === "manual" && isFinite(num(d.fM)) ? num(d.fM) : rnd(fo.f, 3);
+    if (fo.out && d.fMode !== "manual") warn.push("L = " + f(L, 1) + " м вне табл. 4.1 — взято крайнее значение f = " + f(fv, 3) + ".");
+    var Kf = rnd(fv * rw * Om * 1e-5, 3), Kr = rnd(0.09 * Cb * D / (L * L), 4);
+    var rows = a3.rows.map(function (x) {
+      var p183 = rnd(Math.pow(x.V, 1.83), 3), p4 = rnd(Math.pow(x.V, 4), 2), Rf = rnd(Kf * p183, 1), Rr = rnd(Kr * p4, 1), R = rnd(Rf + Rr, 1);
+      return { i: x.i, k: x.k, Vk: x.Vk, V: x.V, p183: p183, p4: p4, Rf: Rf, Rr: Rr, R: R, Ra: x.R, Fr: x.Fr, dif: (R - x.R) / x.R * 100, sf: Rf / R * 100 };
+    });
+    var Vx = Kr > 0 ? Math.pow(Kf / Kr, 1 / 2.17) : NaN;
+    return { steps: [], warn: warn, a3: a3, L: L, B: B, d: dd, D: D, rw: rw, V: V, CbF: CbF, CbA: CbA, Cb: Cb, cbMode: d.cbMode, Bd: Bd, print: print, Om: Om, fo: fo, f: fv, fMan: d.fMode === "manual",
+      Kf: Kf, Kr: Kr, rows: rows, Vx: Vx, Vxk: Vx / a3.kn };
+  }
+  function r4Base(r) {
+    var L = [];
+    L.push("∇ = Δ/ρ = " + f(r.D, 0) + "/" + f(r.rw / 1000, 3) + " = " + f(r.V, 0) + " м³;  Cb = ∇/(Lbp·B·dср) = " + f(r.V, 0) + "/(" + f(r.L, 1) + "·" + f(r.B, 1) + "·" + f(r.d, 1) + ") = " + f(r.CbF, 3) + "   (4.1)" +
+      (r.cbMode === "a" ? ";  в расчёте — Cb = " + f(r.Cb, 2) + " из прил. 2" : ""));
+    L.push(r.print ? "Ω = Lbp·dср·(1,97 + 1,37·(Cb − 0,274·B/dср)) = " + f(r.L, 1) + "·" + f(r.d, 1) + "·(1,97 + 1,37·(" + f(r.Cb, 3) + " − 0,274·" + f(r.Bd, 3) + ")) = " + f(r.Om, 0) + " м²   (4.2)"
+      : "Ω = Lbp·dср·(1,97 + 1,37·(Cb − 0,274)·B/dср) = " + f(r.L, 1) + "·" + f(r.d, 1) + "·(1,97 + 1,37·(" + f(r.Cb, 3) + " − 0,274)·" + f(r.Bd, 3) + ") = " + f(r.Om, 0) + " м²   (4.2)");
+    var fo = r.fo;
+    L.push(r.fMan ? "f = " + f(r.f, 3) + " (задано вручную)" : fo.a === fo.b ? "f = " + f(r.f, 3) + " (табл. 4.1, L = " + g0(fo.a[0]) + " м)" :
+      "f = " + f(fo.a[1], 3) + " + (" + f(fo.b[1], 3) + " − " + f(fo.a[1], 3) + ")·(" + f(r.L, 1) + " − " + fo.a[0] + ")/(" + fo.b[0] + " − " + fo.a[0] + ") = " + f(r.f, 3) + " (табл. 4.1, интерполяция по L)");
+    L.push("Rf = f·ρ·Ω·V^1,83·10⁻⁵ = " + f(r.f, 3) + "·" + f(r.rw, 0) + "·" + f(r.Om, 0) + "·10⁻⁵·V^1,83 = " + f(r.Kf, 3) + "·V^1,83, кН   (4.3)");
+    L.push("Rr = 0,09·Cb·Δ·V⁴/Lbp² = 0,09·" + f(r.Cb, 3) + "·" + f(r.D, 0) + "·V⁴/" + f(r.L, 1) + "² = " + f(r.Kr, 4) + "·V⁴, кН   (4.4)");
+    return L;
+  }
+  function r4Rows(r) {
+    return r.rows.map(function (x) {
+      return vName(x) + " = " + f(x.V, 2) + " м/с:  Rf = " + f(r.Kf, 3) + "·" + f(x.V, 2) + "^1,83 = " + f(r.Kf, 3) + "·" + f(x.p183, 3) + " = " + f(x.Rf, 1) + ";  Rr = " + f(r.Kr, 4) + "·" + f(x.V, 2) + "⁴ = " + f(r.Kr, 4) + "·" + f(x.p4, 2) + " = " + f(x.Rr, 1) + ";  R = " + f(x.Rf, 1) + " + " + f(x.Rr, 1) + " = " + f(x.R, 1) + " кН";
+    });
+  }
+  function r4Table(r) {
+    return { title: "Сопротивление воды: уточнённый и приближённый способы", headers: ["Ход", "V, уз", "V, м/с", "Fr", "Rf, кН", "Rr, кН", "R = Rf + Rr, кН", "Доля Rf, %", "R прибл. (ЛР 3), кН", "Разница, %"],
+      rows: r.rows.map(function (x) { return [rName(x) + " (" + vName(x) + ")", f(x.Vk, 2), f(x.V, 2), f(x.Fr, 3), f(x.Rf, 1), f(x.Rr, 1), f(x.R, 1), f(x.sf, 0), f(x.Ra, 1), fsg(x.dif, 0)]; }),
+      widths: [2.0, 1.3, 1.4, 1.3, 1.5, 1.5, 2.0, 1.6, 2.2, 1.7], size: 9 };
+  }
+  function concl4(r) {
+    var x0 = r.rows[0], out = [], last = r.rows[r.rows.length - 1];
+    out.push("1. Уточнённым способом на полном ходу (" + f(x0.Vk, 1) + " уз) сопротивление R = Rf + Rr = " + f(x0.Rf, 1) + " + " + f(x0.Rr, 1) + " = " + f(x0.R, 1) + " кН (≈ " + f(x0.R / 9.81, 1) + " тс); по приближённому способу (ЛР 3) — " + f(x0.Ra, 1) + " кН, разница " + fsg(x0.dif, 0) + " %.");
+    out.push("2. Сопротивление трения пропорционально V^1,83, остаточное — V⁴, поэтому с ростом скорости доля остаточного (волнового и вихревого) сопротивления быстро растёт: при " + f(last.Vk, 1) + " уз трение составляет " + f(last.sf, 0) + " % сопротивления, на полном ходу — " + f(x0.sf, 0) + " %." +
+      (isFinite(r.Vx) ? " Трение и остаточное сопротивление равны при V ≈ " + f(r.Vx, 2) + " м/с (" + f(r.Vxk, 1) + " уз): ниже этой скорости преобладает трение, выше — сопротивление формы." : ""));
+    out.push("3. Приближённый способ (R ∝ V², по мощности двигателя) не учитывает разный характер составляющих и для этого судна даёт " + (x0.dif < 0 ? "большие" : "меньшие") + " значения (разница от " + fsg(Math.min.apply(null, r.rows.map(function (x) { return x.dif; })), 0) + " до " + fsg(Math.max.apply(null, r.rows.map(function (x) { return x.dif; })), 0) + " %). Уточнённый способ учитывает размеры и форму корпуса (Cb, Ω, Δ, L) и предпочтительнее при расчётах буксировки.");
+    out.push("4. Число Фруда на полном ходу Fr = " + f(x0.Fr, 3) + " — судно водоизмещающее; при Fr > 0,25–0,3 волновое сопротивление растёт особенно быстро, поэтому небольшое снижение скорости заметно уменьшает сопротивление и расход топлива.");
+    return out;
+  }
+  function questions4(r) {
+    var x0 = r ? r.rows[0] : null, last = r ? r.rows[r.rows.length - 1] : null;
+    return [
+      { q: "Объяснить зависимость сопротивления движению судна от скорости хода.", a: ["Сопротивление воды растёт быстрее скорости. Сопротивление трения пропорционально скорости приблизительно в степени 1,83 (4.3), остаточное сопротивление (вихревое и волновое) — в четвёртой степени (4.4), поэтому при малых скоростях основную часть сопротивления составляет трение, а с ростом скорости и усилением волнообразования быстро растёт волновое сопротивление. В среднем для транспортных судов R ≈ R0·(V/V0)² (3.3)." +
+        (x0 ? " В работе: при " + f(last.Vk, 1) + " уз R = " + f(last.R, 1) + " кН (трение " + f(last.sf, 0) + " %), при " + f(x0.Vk, 1) + " уз — " + f(x0.R, 1) + " кН (трение " + f(x0.sf, 0) + " %)." : ""),
+        "При приближении скорости к критической (на глубокой воде — при Fr ≈ 0,4–0,5, на мелководье — при V ≈ √(gH)) волновое сопротивление резко возрастает, и водоизмещающее судно практически не может превысить эту скорость: дополнительная мощность идёт на поддержание спутной волны."] },
+      { q: "Дать определение числа Фруда.", a: ["Число Фруда — безразмерная характеристика волнообразования и волнового сопротивления: Fr = V/√(g·L), где V — скорость судна, м/с; g — ускорение свободного падения; L — длина судна между перпендикулярами (для мелководья — FrH = V/√(g·H), H — глубина места). Для водоизмещающих судов Fr = 0…1; чем больше число Фруда, тем интенсивнее волнообразование; при скорости, равной критической скорости распространения волн, FrH = 1." + (x0 ? " В работе на полном ходу Fr = " + f(x0.Fr, 3) + "." : "")] },
+      { q: "Объяснить явление попутного потока.", a: ["Попутный поток — движение воды вблизи корпуса (особенно у кормы) в направлении движения судна. Он возникает из-за вязкости воды (пограничный слой увлекается корпусом), из-за перетекания воды из области повышенного давления у кормы в область пониженного давления у миделя и из-за волнообразования: чем интенсивнее волнообразование, тем сильнее попутный поток.",
+        "Попутный поток уменьшает скорость воды, набегающей на гребной винт и перо руля, поэтому давление набегающего потока на руль и вращающий момент пера руля уменьшаются — ухудшается управляемость. Это особенно заметно на мелководье, где волнообразование интенсивнее."] }
+    ];
+  }
+  /* рисунки ЛР 4 */
+  function drawR4(cv, LK, d, r) {
+    var V0 = r.a3.V0, top = Math.ceil(V0 + 0.5), dense = function (fn) { var p = []; for (var v = 0; v <= V0 + 1e-9; v += V0 / 120) p.push([v, fn(v)]); return p; };
+    drawGraph(cv, LK, { title: "R = f(V) — уточнённый способ, судно " + (d.ship || ""), ylab: "R, кН", xlab: "V, м/с", xmin: 0, xmax: top, xstep: 1, legendLeft: true, legendW: 470, xres: 0.02,
+      series: [
+        { name: "R = Rf + Rr (уточнённый)", color: C1, dense: true, pts: dense(function (v) { return r.Kf * Math.pow(v, 1.83) + r.Kr * Math.pow(v, 4); }) },
+        { name: "Rf — трение", color: C3, dense: true, dash: [12, 8], pts: dense(function (v) { return r.Kf * Math.pow(v, 1.83); }) },
+        { name: "Rr — остаточное (формы)", color: C4, dense: true, dash: [12, 8], pts: dense(function (v) { return r.Kr * Math.pow(v, 4); }) },
+        { name: "R прибл. = R0·(V/V0)² (ЛР 3)", color: "#888", dense: true, dash: [4, 6], pts: dense(function (v) { return r.a3.R0 * Math.pow(v / V0, 2); }) },
+        { name: "расчётные точки", color: C2, noLine: true, outer: true, drop: true, pts: r.rows.map(function (x) { return [x.V, x.R]; }).reverse(),
+          lab: function (q) { var x = r.rows.filter(function (z) { return Math.abs(z.V - q[0]) < 1e-9; })[0]; return (x ? rName(x) + " = " : "") + f(q[1], 1); } }] });
+  }
+  function drawBars4(cv, LK, d, r) {
+    var W = 1400, H = 900; cv.width = W; cv.height = H; var c = cv.getContext("2d"), FONT = LK.font, ink = LK.ink || "#1b1b1b";
+    c.fillStyle = "#fff"; c.fillRect(0, 0, W, H);
+    var ml = 150, mr = 50, mt = 90, mb = 130, pw = W - ml - mr, ph = H - mt - mb, rows = r.rows.slice().reverse();
+    var ymax = Math.max.apply(null, rows.map(function (x) { return Math.max(x.R, x.Ra); })), st = niceStep(ymax, 8); ymax = Math.ceil(ymax / st + 0.15) * st;
+    function Y(v) { return mt + (ymax - v) / ymax * ph; }
+    c.strokeStyle = "#e3e3e3"; c.lineWidth = 1; for (var v = 0; v <= ymax + 1e-9; v += st) { c.beginPath(); c.moveTo(ml, Y(v)); c.lineTo(ml + pw, Y(v)); c.stroke(); }
+    c.strokeStyle = ink; c.lineWidth = 2; c.strokeRect(ml, mt, pw, ph);
+    c.font = "20px " + FONT; c.fillStyle = ink; c.textAlign = "right"; for (v = 0; v <= ymax + 1e-9; v += st) c.fillText(f(v, st < 1 ? 1 : 0), ml - 12, Y(v) + 7);
+    c.save(); c.translate(42, mt + ph / 2); c.rotate(-Math.PI / 2); c.font = "600 24px " + FONT; c.textAlign = "center"; c.fillText("R, кН", 0, 0); c.restore();
+    c.font = "700 28px " + FONT; c.textAlign = "left"; c.fillText("Составляющие сопротивления и сравнение со способом ЛР 3", ml, 50);
+    var gw = pw / rows.length, bw = Math.min(90, gw * 0.3);
+    rows.forEach(function (x, i) {
+      var cx = ml + gw * (i + 0.5), xa = cx - bw - 6, xb = cx + 6;
+      c.fillStyle = C3; c.fillRect(xa, Y(x.Rf), bw, Y(0) - Y(x.Rf));
+      c.fillStyle = C4; c.fillRect(xa, Y(x.R), bw, Y(x.Rf) - Y(x.R));
+      c.fillStyle = "#b8b8b8"; c.fillRect(xb, Y(x.Ra), bw, Y(0) - Y(x.Ra));
+      c.strokeStyle = ink; c.lineWidth = 1.2; c.strokeRect(xa, Y(x.R), bw, Y(0) - Y(x.R)); c.strokeRect(xb, Y(x.Ra), bw, Y(0) - Y(x.Ra));
+      label(c, f(x.R, 1), xa + bw / 2, Y(x.R) - 10, C1, 18, FONT);
+      label(c, f(x.Ra, 1), xb + bw / 2, Y(x.Ra) - 10, "#555", 18, FONT);
+      if (Y(0) - Y(x.Rf) > 26) { c.font = "700 17px " + FONT; c.fillStyle = "#fff"; c.textAlign = "center"; c.fillText(f(x.sf, 0) + " %", xa + bw / 2, (Y(0) + Y(x.Rf)) / 2 + 6); }
+      c.font = "600 20px " + FONT; c.fillStyle = ink; c.textAlign = "center";
+      c.fillText(vName(x) + " = " + f(x.Vk, 1) + " уз", cx, mt + ph + 32); c.font = "18px " + FONT; c.fillText(f(x.V, 2) + " м/с", cx, mt + ph + 58);
+    });
+    var lx = ml + 20, ly = mt + 18, items = [[C3, "Rf — трение (% — доля в R)"], [C4, "Rr — остаточное сопротивление"], ["#b8b8b8", "R прибл. (ЛР 3)"]];
+    c.fillStyle = "rgba(255,255,255,0.93)"; c.strokeStyle = "#999"; c.lineWidth = 1.5; c.fillRect(lx, ly, 420, 34 * items.length + 18); c.strokeRect(lx, ly, 420, 34 * items.length + 18);
+    items.forEach(function (it, i) { var y = ly + 30 + i * 34; c.fillStyle = it[0]; c.fillRect(lx + 16, y - 18, 40, 20); c.fillStyle = ink; c.font = "21px " + FONT; c.textAlign = "left"; c.fillText(it[1], lx + 70, y); });
+  }
+  function solve4s(d) {
+    var r = solve4(d); if (!r.rows) return r;
+    var st = [];
+    st.push({ no: 1, title: "Коэффициент полноты, площадь смоченной поверхности, коэффициент трения", given: "Lbp = " + d.Lpp + " м, B = " + d.B + " м, dср = " + d.d + " м, Δ = " + d.disp + " т, ρ = " + d.rhoW + " кг/м³",
+      lines: r4Base(r), answer: "Cb = " + f(r.Cb, 3) + "; Ω = " + f(r.Om, 0) + " м²; f = " + f(r.f, 3) });
+    st.push({ no: 2, title: "Сопротивление трения Rf, остаточное Rr и полное R при V0…V" + (r.rows.length - 1), lines: r4Rows(r), tables: [r4Table(r)], after: concl4(r), figs: ["r4", "bars4"],
+      answer: r.rows.map(function (x) { return rName(x) + " = " + f(x.R, 1); }).join("; ") + " кН" });
+    var Q = questions4(r);
+    st.push({ no: 3, noLabel: "", title: "Контрольные вопросы", lines: [], paras: Q.reduce(function (acc, q, i) { return acc.concat([(i + 1) + ". " + q.q]).concat(q.a); }, []) });
+    r.steps = st; r.Q = Q;
+    return r;
+  }
+  function report4(D, d, r, img) {
+    var fn = 0, s = shipOf(d.variant);
+    function fig(id, cm, cap) { fn++; img(id, cm); D.para("Рисунок " + fn + " — " + cap, { align: "center", size: 10, after: 8 }); }
+    function small(txt) { D.para(txt, { align: "left", size: 11, after: 2 }); }
+    if (D.hasTitle) { D.para("Лабораторная работа № 4", { bold: true, align: "center", size: 14, after: 0 }); D.para("«Уточнённый способ расчёта сопротивления корпуса судна давлению воды»", { bold: true, align: "center", size: 14, after: 8 }); }
+    if (!r.rows) { D.text("Недостаточно исходных данных."); return; }
+    D.text([{ t: "Цель: ", bold: true }, "научиться определять сопротивление воды движению судна, учитывая форму корпуса судна."]);
+    D.text([{ t: "Задание: ", bold: true }, "рассчитать сопротивление воды движению судна с учётом трения среды и формы корпуса; сравнить с приближённым способом (лабораторная работа № 3); построить график R = f(V)."]);
+    D.head("1. Краткая теория");
+    D.text("Полное сопротивление воды движению судна — это сумма гидродинамических сил, действующих со стороны жидкости на смоченную поверхность корпуса. Часть этих сил зависит от вязких свойств жидкости — она создаёт сопротивление трения Rf и турбулентный попутный поток. Другая часть — остаточное сопротивление (сопротивление формы) Rr — связана с вихреобразованием у кормы и с волнообразованием.");
+    D.text("Попутный поток образуется из-за появления областей повышенного и пониженного давления вокруг корпуса и ослабляет действие набегающего на перо руля потока. Чем интенсивнее волнообразование, тем сильнее попутный поток. Волновое сопротивление оценивается числом Фруда Fr = V/√(g·L); для водоизмещающих судов 0 < Fr < 1.");
+    D.text("Уточнённый способ расчёта:");
+    D.formula("Cb = ∇/(Lbp·B·dср),     (4.1)");
+    D.formula(r.print ? "Ω = Lbp·dср·(1,97 + 1,37·(Cb − 0,274·B/dср)), м²,     (4.2)" : "Ω = Lbp·dср·(1,97 + 1,37·(Cb − 0,274)·B/dср), м²,     (4.2)");
+    D.formula("Rf = f·ρ·Ω·Vi^1,83·10⁻⁵, кН,     (4.3)");
+    D.formula("Rr = 0,09·Cb·Δ·Vi⁴/Lbp², кН,     (4.4)");
+    D.formula("R = Rf + Rr,");
+    D.text("где ∇ — объёмное водоизмещение, м³; Lbp — длина между перпендикулярами, м; B — ширина, м; dср — осадка по летнюю грузовую марку, м; f — коэффициент трения, зависящий от длины судна (табл. 4.1); ρ — плотность воды места, кг/м³; Δ — весовое водоизмещение, т; Vi — скорость, м/с.");
+    D.head("2. Исходные данные");
+    D.text("Экипаж № " + d.variant + " — судно № " + s.no + " «" + s.name + "» (прил. 2), в грузу по летнюю грузовую марку.");
+    D.table(["Параметр", "Обозначение", "Значение"], [["Длина между перпендикулярами", "Lbp, м", d.Lpp], ["Ширина", "B, м", d.B], ["Осадка", "dср, м", d.d], ["Весовое водоизмещение", "Δ, т", d.disp],
+      ["Плотность воды", "ρ, кг/м³", d.rhoW], ["Скорость полного хода", "V0, уз", d.V0], ["Доли скорости", "V/V0", r.rows.map(function (x) { return f(x.k, 2); }).join("; ")]], { widths: [8, 3.6, 4.4], size: 10, lefts: [0] });
+    D.head("3. Коэффициент полноты, площадь смоченной поверхности и коэффициент трения");
+    r4Base(r).forEach(function (l) { D.formula(l); });
+    D.head("4. Сопротивление трения, остаточное и полное сопротивление");
+    r4Rows(r).forEach(function (l) { small(l); });
+    D.text("Значения R прибл. взяты из лабораторной работы № 3: R0 = Ne·η·ηв·ηр/V0 = " + f(r.a3.R0, 1) + " кН (η = " + f(r.a3.eta, 3) + "), R = R0·(V/V0)².", { size: 11 });
+    var t = r4Table(r); D.sub(t.title); D.table(t.headers, t.rows, { widths: t.widths, size: t.size });
+    fig("r4", 16, "График R = f(V) по уточнённому способу");
+    fig("bars4", 16, "Составляющие сопротивления воды и сравнение с приближённым способом");
+    D.head("5. Выводы");
+    concl4(r).forEach(function (l) { D.text(l); });
+    D.head("6. Ответы на контрольные вопросы");
+    r.Q.forEach(function (q, i) { D.sub((i + 1) + ". " + q.q); q.a.forEach(function (a) { D.text(a); }); });
+    D.head("Список использованной литературы");
+    D.numbered(["Сливаев Б. Г. Теоретические и практические основы управления судном: учебно-методическое пособие. — Владивосток: МГУ им. адм. Г. И. Невельского, 2027. — 192 с.",
+      "Письменный М. Н. Курс лекций по маневрированию, управлению судном и безопасности мореплавания: учебное пособие. — Владивосток: МГУ им. адм. Г. И. Невельского, 2022. — 270 с.",
+      "Сливаев Б. Г. Основы маневрирования и управления судном: учебное пособие. — Владивосток: МГУ им. адм. Г. И. Невельского.",
+      "Волнообразование от движения судна: конспект лекции по дисциплине «Маневрирование и управление судном». — МГУ им. адм. Г. И. Невельского."]);
+  }
+  App.taskWork({
+    disc: "miyus", discName: "Маневрирование и управление судном", id: "miyus-lr4", order: 4, key: "miyus-lr4", file: "МиУС_ЛР4_Уточнённое_сопротивление",
+    no: "ЛР 4", short: "ЛР №4", eyebrow: "МиУС · Лабораторная работа №4", titleKind: "Лабораторная работа",
+    title: "Уточнённый способ расчёта сопротивления корпуса судна давлению воды",
+    titleTopic: "Уточнённый способ расчёта сопротивления корпуса судна давлению воды",
+    desc: "Cb, площадь смоченной поверхности, сопротивление трения (табл. 4.1) и остаточное сопротивление при V0…0,25V0, сравнение с приближённым способом ЛР 3, график R = f(V).",
+    variants: 12, defaultVariant: 7, variantLabel: "Экипаж (судно)", keep: ["nSel", "ks", "etaR", "om22"], summary: false,
+    variantName: function (v) { var s = shipOf(v); return "Экипаж " + v + " — " + s.name + " (" + s.gr + " " + v + ")"; },
+    varText: function (d) { var s = shipOf(d.variant); return "Экипаж № " + d.variant + ", судно № " + s.no + " «" + s.name + "»"; },
+    variantData: vd4,
+    hint: "Экипаж = номер судна (прил. 2). Данные для приближённого способа (мощность, обороты, скорость) берутся такие же, как в ЛР 3; если в ЛР 3 ты их менял, они подхватываются при выборе того же экипажа.",
+    sections: [
+      { title: "Судно (прил. 2)", fields: [["ship", "Судно", { wide: true }], ["Lpp", "Lbp", { num: true, unit: "м" }], ["B", "Ширина B", { num: true, unit: "м" }], ["d", "Осадка dср", { num: true, unit: "м" }],
+        ["disp", "Водоизмещение Δ", { num: true, unit: "т" }], ["rhoW", "Плотность воды ρ", { num: true, unit: "кг/м³" }],
+        ["cbMode", "Cb", { select: [["f", "по формуле (4.1)"], ["a", "из прил. 2 (строка 36)"]] }], ["cbA", "Cb по прил. 2", { num: true }]] },
+      { title: "Скорости и приближённый способ (как в ЛР 3)", fields: [["V0", "Скорость полного хода V0", { num: true, unit: "уз" }], ["ks", "Доли V0 для V1…V4", { wide: true }], ["kn", "1 уз =", { num: true, unit: "м/с" }],
+        ["Ne", "Мощность Ne", { num: true, unit: "кВт" }], ["etaV", "ηв", { num: true }], ["etaR", "ηр", { num: true }],
+        ["nSel", "Обороты для η (Лапп)", { select: [["ppx", "ППХ"], ["max", "максимальные"]] }], ["nPpx", "ППХ", { num: true, unit: "об/мин" }], ["nMax", "Максимальные", { num: true, unit: "об/мин" }]] },
+      { title: "Коэффициент трения f (табл. 4.1)", note: "По умолчанию f — по табл. 4.1 для длины судна (между строками таблицы — линейная интерполяция).",
+        fields: [["fMode", "Источник f", { select: [["auto", "по табл. 4.1"], ["manual", "вручную"]] }], ["fM", "f вручную", { num: true }]] },
+      { title: "Настройки", note: "Формула (4.2) в методичке напечатана со скобкой не на месте: Cb − 0,274·B/d. Так Ω получается почти вдвое меньше. Правильная формула Семеки (Cb − 0,274)·B/d стоит по умолчанию, как и в ЛР 2.",
+        fields: [["om22", "Формула (4.2)", { select: [["s", "правильная: (Cb − 0,274)·B/d"], ["p", "как напечатано: (Cb − 0,274·B/d)"]], wide: true }]] }
+    ],
+    goal: "Цель: научиться определять сопротивление воды движению судна, учитывая форму корпуса судна.",
+    figs: { r4: { caption: "График R = f(V) (уточнённый способ)", draw: drawR4 }, bars4: { caption: "Составляющие сопротивления воды", draw: drawBars4 } },
+    solve: solve4s, report: report4
+  });
+
   return { SHIPS: SHIPS, CA: CA, CA_PHI: CA_PHI, CREW: CREW, trueWind: trueWind, alphaOf: alphaOf, solve: solve, vd: vd,
-    CYW: CYW, CMW: CMW, WAVE: WAVE, DEPTH: DEPTH, coefAt: coefAt, waveAt: waveAt, solve2: solve2s, vd2: vd2, solve3: solve3s, vd3: vd3 };
+    CYW: CYW, CMW: CMW, WAVE: WAVE, DEPTH: DEPTH, coefAt: coefAt, waveAt: waveAt, solve2: solve2s, vd2: vd2, solve3: solve3s, vd3: vd3, solve4: solve4s, vd4: vd4, fOf: fOf };
 })();
 
 App.start();
