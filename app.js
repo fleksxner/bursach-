@@ -4522,7 +4522,7 @@ var LR1Engine = (function () {
   var CSS = ".fld[data-custom]{grid-column:1/-1 !important}.wd{display:grid;gap:10px}.wd-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}" +
     ".wd-bar button{border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px var(--sans);padding:6px 10px;border-radius:7px;cursor:pointer}.wd-bar button.warn{border-color:var(--bad);color:var(--bad)}" +
     ".wd h3{margin:6px 0 0;font:600 15px var(--cond)}.wd-tw{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}" +
-    ".wd-t{width:100%;border-collapse:collapse;font:13px var(--sans)}.wd-t.w7{min-width:760px}.wd-t.w4{min-width:420px}" +
+    ".wd-t{width:100%;border-collapse:collapse;font:13px var(--sans)}.wd-t.w7{min-width:760px}.wd-t.w4{min-width:420px}.wd-t.w5{min-width:520px}" +
     ".wd-t th{font:600 12px var(--cond);color:var(--muted);text-align:left;padding:6px 4px;background:var(--sunk);white-space:nowrap}.wd-t td{padding:3px 3px;border-top:1px solid var(--line)}" +
     ".wd-t input,.wd-t select{width:100%;box-sizing:border-box;font:13px var(--mono);padding:5px 5px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink);min-width:0}" +
     ".wd-t select{font-family:var(--sans)}.wd-t td.nm{font:600 13px var(--sans);white-space:nowrap;padding-left:8px}.wd-del{border:0;background:none;color:var(--bad);font-size:19px;cursor:pointer;padding:0 6px}" +
@@ -4644,6 +4644,288 @@ var LR1Engine = (function () {
       dyn: { caption: "Динамика поглощения воды образцами", draw: drawDyn }
     },
     solve: solve, report: report
+  });
+
+  /* ======================================================================
+     ЛР № 2 «Исследования свойств навалочных грузов» (методичка 2016, с. 8–9).
+     Угол естественного откоса — угол наклона основания штатива (через 1°), при котором
+     груз начинает смещаться. Ступени: исходный груз, затем вода до массы +5, +10 … +30 %
+     от исходной. Определить относительную влажность, при которой угол минимален.
+     В примере методички заполнено только начало: песок, 415 г, 17°.
+     ====================================================================== */
+  var STEPS = [0, 5, 10, 15, 20, 25, 30];
+  function ex2() { return [{ n: "Песок", m0: "415", w0: "", a: ["17", "", "", "", "", "", ""], m: ["", "", "", "", "", "", ""] }]; }
+  function blank2(i) { return { n: "Груз " + i, m0: "", w0: "", a: ["", "", "", "", "", "", ""], m: ["", "", "", "", "", "", ""] }; }
+  function fg(x, n) { return isFinite(x) ? f(x, n === undefined ? 1 : n) : "–"; }
+  function model2(d) {
+    var R = (d.items || []).map(function (it, i) {
+      var o = { n: String(it.n || "").trim() || "Груз " + (i + 1), m0: num(it.m0), W0: num(it.w0), pts: [] };
+      if (!isFinite(o.W0)) o.W0 = 0;
+      o.mw0 = isFinite(o.m0) ? o.m0 * o.W0 / 100 : NaN;
+      o.rows = STEPS.map(function (k, j) {
+        var mc = o.m0 * (1 + k / 100), mm = j ? num(it.m && it.m[j]) : o.m0, M = isFinite(mm) ? mm : mc;
+        var r = { k: k, j: j, mc: mc, meas: j > 0 && isFinite(mm), M: M, dw: M - o.m0, a: num(it.a && it.a[j]) };
+        r.W = isFinite(M) && M > 0 ? (o.mw0 + r.dw) / M * 100 : NaN;
+        return r;
+      });
+      o.rows.forEach(function (r, j) { r.add = j ? r.M - o.rows[j - 1].M : NaN; r.da = isFinite(r.a) && isFinite(o.rows[0].a) ? r.a - o.rows[0].a : NaN; });
+      o.pts = o.rows.filter(function (r) { return isFinite(r.a) && isFinite(r.W); });
+      o.has = isFinite(o.m0) || o.rows.some(function (r) { return isFinite(r.a); });
+      return o;
+    }).filter(function (o) { return o.has; });
+    return { R: R };
+  }
+  function wList(rs) { return rs.map(function (r) { return fg(r.W, 1) + " %"; }).join(", "); }
+  function itemConcl(o) {
+    var p = o.pts, out = [];
+    if (!p.length) return out;
+    var a0 = o.rows[0], dryTxt = o.W0 > 0 ? "исходного груза (влажность " + fg(o.W0, 1) + " %)" : "сухого груза";
+    if (isFinite(a0.a)) out.push("Угол естественного откоса " + dryTxt + " «" + o.n + "» — " + fg(a0.a, 0) + "°.");
+    if (p.length < 2) return out;
+    var A = p.map(function (r) { return r.a; }), mx = Math.max.apply(null, A), mi = Math.min.apply(null, A);
+    var first = p[0], last = p[p.length - 1];
+    var iMax = A.indexOf(mx), iMin = A.indexOf(mi), lastMax = A.lastIndexOf(mx);
+    var nondec = A.every(function (x, i) { return !i || x >= A[i - 1]; }), noninc = A.every(function (x, i) { return !i || x <= A[i - 1]; });
+    var at = function (r) { return fg(r.a, 0) + "° при W = " + fg(r.W, 1) + " %"; };
+    if (mx === mi) { out.push("При увеличении влажности до " + fg(last.W, 1) + " % угол естественного откоса не изменился (" + fg(mx, 0) + "° — в пределах точности измерения 1°)."); return out; }
+    if (nondec) out.push("С ростом влажности от " + fg(first.W, 1) + " до " + fg(last.W, 1) + " % угол естественного откоса увеличивался: от " + fg(first.a, 0) + "° до " + fg(last.a, 0) + "°.");
+    else if (noninc) out.push("С ростом влажности от " + fg(first.W, 1) + " до " + fg(last.W, 1) + " % угол естественного откоса уменьшался: от " + fg(first.a, 0) + "° до " + fg(last.a, 0) + "°.");
+    else if (iMax > 0 && lastMax < p.length - 1 && A.slice(0, iMax + 1).every(function (x, i) { return !i || x >= A[i - 1]; }) && A.slice(lastMax).every(function (x, i, s) { return !i || x <= s[i - 1]; }))
+      out.push("С ростом влажности угол естественного откоса сначала увеличивался — до " + at(p[iMax]) + ", а при дальнейшем увлажнении уменьшался — до " + at(last) + ".");
+    else if (iMin > 0 && A.slice(0, iMin + 1).every(function (x, i) { return !i || x <= A[i - 1]; }) && A.slice(A.lastIndexOf(mi)).every(function (x, i, s) { return !i || x >= s[i - 1]; }))
+      out.push("С ростом влажности угол естественного откоса сначала уменьшался — до " + at(p[iMin]) + ", а затем снова увеличивался — до " + at(last) + ".");
+    else out.push("С ростом влажности угол естественного откоса изменялся неравномерно: от " + fg(mi, 0) + "° до " + fg(mx, 0) + "° (наибольший — " + at(p[iMax]) + ").");
+    var mins = p.filter(function (r) { return r.a === mi; });
+    out.push("Угол естественного откоса минимален (" + fg(mi, 0) + "°) при относительной влажности груза " + "W = " + wList(mins) + (mins[0].j === 0 && mins.length === 1 ? " — у исходного груза, без добавления воды" : "") + ".");
+    if (mins[0].j === 0 && mins.length === 1) {
+      var wet = p.filter(function (r) { return r.j > 0; }), wmi = Math.min.apply(null, wet.map(function (r) { return r.a; }));
+      if (wet.length) out.push("Среди увлажнённых состояний наименьший угол — " + fg(wmi, 0) + "° при W = " + wList(wet.filter(function (r) { return r.a === wmi; })) + ".");
+    }
+    return out;
+  }
+  function causes(M) {
+    var up = false, down = false;
+    M.R.forEach(function (o) { var A = o.pts.map(function (r) { return r.a; }); for (var i = 1; i < A.length; i++) { if (A[i] > A[i - 1]) up = true; if (A[i] < A[i - 1]) down = true; } });
+    var out = [];
+    if (up) out.push("Рост угла откоса при небольшом увлажнении объясняется капиллярным сцеплением: вокруг частиц и в местах их контакта образуются тонкие плёнки и мениски воды, силы поверхностного натяжения стягивают частицы, и груз держится на более крутом склоне.");
+    if (down) out.push("Уменьшение угла откоса при большой влажности объясняется тем, что вода заполняет поры между частицами: капиллярное сцепление исчезает, вода действует как смазка и уменьшает трение частиц друг о друга, груз становится подвижным (текучим), а переувлажнённый мелкозернистый груз может разжижаться.");
+    return out;
+  }
+  function solve2(d) {
+    var M = model2(d), st = [], warn = [];
+    if (!M.R.length) return { steps: [], warn: ["Заполните исследование (вкладка «Вводные данные») или нажмите «Пример из методички»."], M: M };
+    var tn = 0, T = function () { return ++tn; };
+    M.R.forEach(function (o, i) {
+      if (!isFinite(o.m0)) warn.push("«" + o.n + "»: не указана начальная масса груза — массы и влажность не считаются.");
+      var miss = o.rows.filter(function (r) { return !isFinite(r.a); });
+      if (miss.length) warn.push("«" + o.n + "»: не измерен угол откоса для " + miss.map(function (r) { return r.j ? "+" + r.k + " %" : "исходного груза"; }).join(", ") + " — впишите углы, измеренные на штативе, и таблица, график и вывод дополнятся.");
+      o.rows.forEach(function (r) { if (r.meas && Math.abs(r.M - r.mc) > Math.max(2, 0.02 * o.m0)) warn.push("«" + o.n + "», ступень +" + r.k + " %: взвешено " + fg(r.M, 0) + " г, а по методичке должно быть ≈ " + fg(r.mc, 1) + " г — проверьте замер (расчёт идёт по взвешенной массе)."); });
+      var hdr = [o.n.toLowerCase(), "Начальная масса груза, г"].concat(STEPS.slice(1).map(function (k) { return "Масса +" + k + " %"; }));
+      var t1 = { title: "Таблица " + T() + " — Исходные параметры (исследование № " + (i + 1) + ", " + o.n.toLowerCase() + ")", headers: hdr, widths: [2.4, 2.2, 1.7, 1.7, 1.7, 1.7, 1.7, 1.7],
+        rows: [["масса, г"].concat(o.rows.map(function (r) { return fg(r.M, r.j && !r.meas ? 1 : 0); })), ["угол естеств. откоса, °"].concat(o.rows.map(function (r) { return isFinite(r.a) ? fg(r.a, 0) + "°" : ""; }))] };
+      var t2 = { title: "Таблица " + T() + " — Влажность груза и угол естественного откоса («" + o.n + "»)", headers: ["Ступень", "Масса m, г", "Добавлено воды Δm_{в}, г", "Относительная влажность W, %", "Угол α, °", "Δα, °"], widths: [2.6, 2.4, 3.2, 3.4, 2.2, 2.2],
+        rows: o.rows.map(function (r) { return [r.j ? "+" + r.k + " %" : "исходный груз", fg(r.M, 1), fg(r.dw, 1), fg(r.W, 1), isFinite(r.a) ? fg(r.a, 0) : "–", r.j && isFinite(r.da) ? (r.da > 0 ? "+" : "") + f(r.da, 0).replace("-", "−") : "–"]; }) };
+      var r5 = o.rows[1], lines = ["m = m_{0} · (1 + k/100),   Δm_{в} = m − m_{0},   W = (m_{в0} + Δm_{в}) / m · 100 %"];
+      if (isFinite(o.m0)) {
+        var g2 = function (x) { return String(Math.round(x * 100) / 100).replace(".", ","); };
+        lines.push("Пример — ступень +5 %: m = " + g2(o.m0) + " · (1 + 5/100) = " + g2(r5.mc) + " г" + (r5.meas ? " (взвешено " + g2(r5.M) + " г)" : "") + ";  Δm_{в} = " + g2(r5.M) + " − " + g2(o.m0) + " = " + g2(r5.dw) + " г;  W = " +
+          (o.W0 > 0 ? "(" + g2(o.mw0) + " + " + g2(r5.dw) + ")" : g2(r5.dw)) + " / " + g2(r5.M) + " · 100 % = " + fg(r5.W, 2) + " %");
+      }
+      var ic = itemConcl(o), mins = o.pts.length >= 2 ? o.pts.filter(function (r) { return r.a === Math.min.apply(null, o.pts.map(function (q2) { return q2.a; })); }) : [];
+      st.push({ no: i + 1, noLabel: "Исследование № " + (i + 1) + ". ", title: o.n, kind: "item", o: o, lines: lines,
+        paras: i === 0 ? ["Масса груза на каждой ступени m = m_{0} · (1 + k/100), где k = 5, 10 … 30 % — увеличение исходной массы за счёт добавленной воды. Относительная влажность — доля воды в массе влажного груза: W = (m_{в0} + Δm_{в}) / m · 100 %, где m_{в0} = m_{0} · W_{0} / 100 — вода в исходном грузе" + (o.W0 > 0 ? "" : " (исходный груз сухой, W_{0} = 0)") + ", Δm_{в} = m − m_{0} — добавленная вода."] : [],
+        tables: [t1, t2], concl: ic, after: ic.length ? ["Вывод по исследованию: " + ic.join(" ")] : [],
+        answer: mins.length ? "α_{min} = " + fg(mins[0].a, 0) + "° при W = " + wList(mins) : isFinite(o.rows[0].a) ? "α (исходный груз) = " + fg(o.rows[0].a, 0) + "°" : "" });
+    });
+    st[0].figs = ["stand"];
+    if (M.R.some(function (o) { return o.pts.length; })) st[st.length - 1].figs = (st[st.length - 1].figs || []).concat(["graph"]);
+    var own = String(d.c || "").trim(), C = [];
+    if (own) C = own.split(/\n+/);
+    else {
+      M.R.forEach(function (o) { var ic = itemConcl(o); if (ic.length) C.push((M.R.length > 1 ? "Исследование № " + (M.R.indexOf(o) + 1) + " (" + o.n.toLowerCase() + "). " : "") + ic.join(" ")); });
+      C = C.concat(causes(M));
+      var free = M.R.filter(function (o) { return o.pts.some(function (r) { return r.a <= 30; }); });
+      var full = M.R.some(function (o) { return o.pts.length >= 2; });
+      if (free.length) C.push("Несвязные навалочные грузы с углом естественного откоса не более 30° текут подобно зерну: по Международному кодексу морской перевозки навалочных грузов (МКМПНГ) их перевозят с соблюдением требований к перевозке зерна" +
+        (free.length === M.R.length ? "" : " (в опыте угол не более 30° наблюдался у груза " + list(free.map(function (o) { return o.n; })) + ")") + ". Угол естественного откоса для грузовых документов определяют тем же способом — наклоном основания с грузом (метод наклоняемого ящика, приложение 2 МКМПНГ).");
+      if (full) C.push("Следовательно, влажность навалочного груза существенно влияет на его подвижность: при изменении влажности меняется угол естественного откоса, а с ним — способность груза смещаться при качке. Поэтому влажность груза контролируют при приёмке, грузы, которые могут разжижаться, принимают к перевозке только при влажности ниже предельной влажности для транспортировки (ПВТ), а груз в трюме штивуют, чтобы исключить его смещение.");
+    }
+    st.push({ no: 99, noLabel: "", title: "Вывод", kind: "fin", lines: [], paras: C });
+    return { steps: st, warn: warn, M: M };
+  }
+
+  /* ---------- рисунки ЛР 2 ---------- */
+  function drawStand(cv, LK) {
+    var W = 1600, H = 480, c = cvSet(cv, W, H); cv._cm = 16;
+    var ink = "#1b1b1b", sand = "#E3C88F", sandD = "#B8964F";
+    function grains(pts, n, seed) {
+      var xs = pts.map(function (p) { return p[0]; }), ys = pts.map(function (p) { return p[1]; }), x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs), y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+      c.save(); c.beginPath(); pts.forEach(function (p, i) { if (i) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); }); c.closePath(); c.clip();
+      var s = seed; function rnd() { s = (s * 9301 + 49297) % 233280; return s / 233280; }
+      c.fillStyle = sandD; for (var i = 0; i < n; i++) { c.beginPath(); c.arc(x0 + rnd() * (x1 - x0), y0 + rnd() * (y1 - y0), 2 + rnd() * 2.2, 0, Math.PI * 2); c.fill(); }
+      c.restore();
+    }
+    /* (а) конус: угол естественного откоса */
+    var bx = 110, by = 300, bw = 520, hh = Math.tan(32 * Math.PI / 180) * bw / 2;
+    ln(c, [[bx - 30, by], [bx + bw + 30, by]], 4, ink);
+    for (var i = 0; i < 16; i++) ln(c, [[bx - 20 + i * 36, by + 4], [bx - 40 + i * 36, by + 24]], 2, ink);
+    var cone = [[bx, by], [bx + bw / 2, by - hh], [bx + bw, by]];
+    c.beginPath(); cone.forEach(function (p, j) { if (j) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); }); c.closePath(); c.fillStyle = sand; c.fill(); c.lineWidth = 3; c.strokeStyle = ink; c.stroke();
+    grains(cone, 220, 7);
+    c.beginPath(); c.arc(bx, by, 120, -32 * Math.PI / 180, 0); c.lineWidth = 2.5; c.strokeStyle = ink; c.stroke();
+    tx(c, "α", bx + 150, by - 34, { size: 40, italic: true });
+    tx(c, "а) угол естественного откоса α —", bx + bw / 2, by + 80, { size: 28 });
+    tx(c, "угол между образующей насыпи и горизонтом", bx + bw / 2, by + 116, { size: 28 });
+    /* (б) наклоняемое основание штатива */
+    var px = 900, py = 300, L = 560, al = 24 * Math.PI / 180;
+    var P = function (u, v) { return [px + u * Math.cos(al) - v * Math.sin(al), py - u * Math.sin(al) - v * Math.cos(al)]; };
+    /* стойка и опора */
+    c.fillStyle = "#c9ced6"; c.fillRect(px - 40, py + 10, 640, 26); c.lineWidth = 2.5; c.strokeStyle = ink; c.strokeRect(px - 40, py + 10, 640, 26);
+    var top = P(L, 0); ln(c, [[top[0] - 20, py + 10], [top[0] - 20, top[1] + 20]], 7, "#55606e");
+    ln(c, [[top[0] - 70, py + 10], [top[0] - 20, top[1] + 120]], 3, "#55606e");
+    /* основание (плита) */
+    var pl = [P(0, 0), P(L, 0), P(L, -18), P(0, -18)];
+    c.beginPath(); pl.forEach(function (p, j) { if (j) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); }); c.closePath(); c.fillStyle = "#8a8f99"; c.fill(); c.stroke();
+    c.beginPath(); c.arc(px, py, 13, 0, Math.PI * 2); c.fillStyle = "#fff"; c.fill(); c.lineWidth = 3; c.stroke();
+    tx(c, "ось поворота", px - 10, py + 62, { size: 25, align: "left" });
+    /* груз на плите */
+    var g = [P(170, 0), P(420, 0), P(390, 60), P(200, 66)];
+    c.beginPath(); g.forEach(function (p, j) { if (j) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); }); c.closePath(); c.fillStyle = sand; c.fill(); c.lineWidth = 3; c.strokeStyle = ink; c.stroke();
+    grains(g, 160, 11);
+    var a1 = P(300, 110), a2 = P(160, 110); ln(c, [a1, a2], 3, "#b03a2e"); arrowHead(c, a2[0], a2[1], Math.atan2(a2[1] - a1[1], a2[0] - a1[0]), 20, "#b03a2e");
+    tx(c, "смещение груза", P(240, 150)[0], P(240, 150)[1], { size: 25, color: "#b03a2e" });
+    /* угол */
+    ln(c, [[px, py], [px + 300, py]], 2, ink, [10, 8]);
+    c.beginPath(); c.arc(px, py, 230, -al, 0); c.lineWidth = 2.5; c.strokeStyle = ink; c.stroke();
+    for (var dgr = 0; dgr <= 24; dgr += 2) { var aa = dgr * Math.PI / 180, r1 = 230, r2 = dgr % 10 ? 242 : 252; ln(c, [[px + r1 * Math.cos(aa), py - r1 * Math.sin(aa)], [px + r2 * Math.cos(aa), py - r2 * Math.sin(aa)]], 1.6, ink); }
+    tx(c, "α", px + 270, py - 50, { size: 40, italic: true });
+    tx(c, "б) основание штатива наклоняют через 1°; α — угол,", px + 260, py + 116, { size: 28 });
+    tx(c, "при котором груз начинает смещаться", px + 260, py + 152, { size: 28 });
+  }
+  function drawGraph(cv, LK, d, r) {
+    var R = r.M.R.filter(function (o) { return o.pts.length; });
+    var W = 1600, H = 900, c = cvSet(cv, W, H); cv._cm = 16;
+    var x1 = 170, x2 = W - 360, y1 = 70, y2 = H - 150;
+    var Ws = [0], As = [];
+    R.forEach(function (o) { o.pts.forEach(function (p) { Ws.push(p.W); As.push(p.a); }); });
+    var wmax = Math.max(25, Math.ceil(Math.max.apply(null, Ws) / 5) * 5);
+    var amin = Math.min.apply(null, As.concat([30])), amax = Math.max.apply(null, As.concat([30]));
+    var Y = axesY(c, x1, x2, y1, y2, Math.max(0, Math.floor((amin - 5) / 5) * 5), amax + 5, "Угол естественного откоса α, °", 6);
+    var X = function (w) { return x1 + w / wmax * (x2 - x1 - 20); };
+    for (var w = 0; w <= wmax + 1e-9; w += 5) { ln(c, [[X(w), y2], [X(w), y2 + 10]], 2, "#333"); tx(c, String(w), X(w), y2 + 34, { size: 25 }); }
+    ln(c, [[x1, y2], [x2, y2]], 2.4, "#333");
+    tx(c, "Относительная влажность груза W, %", (x1 + x2) / 2, y2 + 80, { size: 27 });
+    var y30 = Y(30); ln(c, [[x1, y30], [x2, y30]], 2, "#8a8f99", [14, 10]);
+    R.forEach(function (o, i) {
+      var col = SER[i % SER.length], pts = o.pts.map(function (p) { return [X(p.W), Y(p.a)]; });
+      ln(c, pts, 4.5, col);
+      pts.forEach(function (p) { marker(c, i, p[0], p[1], col); });
+      if (o.pts.length >= 2) {
+        var mi = Math.min.apply(null, o.pts.map(function (p) { return p.a; }));
+        o.pts.forEach(function (p) { if (p.a === mi) { c.beginPath(); c.arc(X(p.W), Y(p.a), 22, 0, Math.PI * 2); c.lineWidth = 2.5; c.strokeStyle = col; c.stroke(); } });
+      }
+    });
+    var lx = x2 + 40, ly = y1 + 20;
+    tx(c, "Груз:", lx, ly, { size: 26, bold: true, align: "left" });
+    R.forEach(function (o, i) { var yy = ly + 50 + i * 46, col = SER[i % SER.length]; ln(c, [[lx, yy], [lx + 56, yy]], 4.5, col); marker(c, i, lx + 28, yy, col); tx(c, o.n, lx + 70, yy, { size: 25, align: "left" }); });
+    var ly2 = ly + 50 + R.length * 46 + 16;
+    ln(c, [[lx, ly2], [lx + 56, ly2]], 2, "#8a8f99", [14, 10]); tx(c, "30° — граница", lx + 70, ly2, { size: 22, align: "left", color: "#555" });
+    tx(c, "свободно текучих", lx + 70, ly2 + 28, { size: 22, align: "left", color: "#555" }); tx(c, "грузов (МКМПНГ)", lx + 70, ly2 + 56, { size: 22, align: "left", color: "#555" });
+    if (R.some(function (o) { return o.pts.length >= 2; })) tx(c, "○ — минимальный угол", lx, ly2 + 100, { size: 22, align: "left", color: "#555" });
+  }
+
+  /* ---------- редактор ЛР 2 ---------- */
+  function editor2(box, data, changed) {
+    css();
+    function I() { if (!Array.isArray(data.items)) data.items = []; return data.items; }
+    function draw() {
+      var h = '<div class="wd"><div class="wd-bar"><button type="button" data-a="add">+ груз (исследование)</button><button type="button" data-a="ex">Пример из методички</button></div>';
+      I().forEach(function (it, i) {
+        var m0 = num(it.m0);
+        h += '<h3>Исследование № ' + (i + 1) + '</h3><div class="wd-tw"><table class="wd-t"><tbody><tr><td class="nm" style="width:52%;white-space:normal">Груз</td><td><input data-f="n" data-i="' + i + '" value="' + esc(it.n) + '"></td><td style="width:36px"><button type="button" class="wd-del" title="Удалить исследование" data-del="' + i + '">×</button></td></tr>' +
+          '<tr><td class="nm" style="white-space:normal">Начальная масса груза m₀, г</td><td><input data-f="m0" data-i="' + i + '" inputmode="decimal" value="' + esc(it.m0) + '"></td><td></td></tr>' +
+          '<tr><td class="nm" style="white-space:normal">Исходная влажность W₀, % <span style="font-weight:400;color:var(--muted)">(пусто — сухой)</span></td><td><input data-f="w0" data-i="' + i + '" inputmode="decimal" value="' + esc(it.w0) + '"></td><td></td></tr></tbody></table></div>';
+        h += '<div class="wd-tw"><table class="wd-t w5"><thead><tr><th style="width:22%">Ступень</th><th style="width:20%">Угол α, °</th><th>Масса по методичке, г</th><th>Долить воды, г</th><th>Взвешено, г <span style="font-weight:400">(необяз.)</span></th></tr></thead><tbody>';
+        STEPS.forEach(function (k, j) {
+          var mc = m0 * (1 + k / 100);
+          h += '<tr><td class="nm">' + (j ? "+" + k + " %" : "исходный") + '</td><td><input data-aa="' + j + '" data-i="' + i + '" inputmode="decimal" value="' + esc(it.a && it.a[j] || "") + '"></td><td data-mc="' + i + "," + j + '">' + (isFinite(m0) ? f(mc, 1) : "–") + '</td><td data-ad="' + i + "," + j + '">' + (j && isFinite(m0) ? f(m0 * 0.05, 1) : "–") + "</td><td>" +
+            (j ? '<input data-mm="' + j + '" data-i="' + i + '" inputmode="decimal" placeholder="' + (isFinite(m0) ? f(mc, 1) : "") + '" value="' + esc(it.m && it.m[j] || "") + '">' : "") + "</td></tr>";
+        });
+        h += "</tbody></table></div>";
+      });
+      if (!I().length) h += '<p class="wd-note">Исследований нет — нажмите «+ груз» или «Пример из методички».</p>';
+      h += '<p class="wd-note">«Долить воды» — сколько воды долить на каждой ступени, чтобы масса выросла ещё на 5 % от исходной (по методичке). Если после добавления воды груз взвешивали — впишите массу в «Взвешено», расчёт пойдёт по ней. Угол — по шкале штатива, через 1°.</p></div>';
+      box.innerHTML = h; bind();
+    }
+    function bind() {
+      box.querySelectorAll("input[data-f]").forEach(function (inp) { inp.addEventListener("input", function () { var it = I()[+inp.dataset.i]; if (!it) return; it[inp.dataset.f] = inp.value; changed(); if (inp.dataset.f === "m0") refreshMass(+inp.dataset.i); }); });
+      box.querySelectorAll("input[data-mm]").forEach(function (inp) { inp.addEventListener("input", function () { var it = I()[+inp.dataset.i]; if (!it) return; if (!it.m) it.m = []; it.m[+inp.dataset.mm] = inp.value.trim(); changed(); }); });
+      box.querySelectorAll("input[data-aa]").forEach(function (inp) { inp.addEventListener("input", function () { var it = I()[+inp.dataset.i]; if (!it) return; if (!it.a) it.a = []; it.a[+inp.dataset.aa] = inp.value.trim(); changed(); }); });
+      box.querySelectorAll("[data-del]").forEach(function (b) { b.addEventListener("click", function () { I().splice(+b.dataset.del, 1); changed(); draw(); }); });
+      box.querySelectorAll("[data-a]").forEach(function (b) { b.addEventListener("click", function () {
+        if (b.dataset.a === "add") I().push(blank2(I().length + 1)); else data.items = ex2();
+        changed(); draw();
+      }); });
+    }
+    function refreshMass(i) {
+      var m0 = num(I()[i] && I()[i].m0);
+      STEPS.forEach(function (k, j) {
+        var mc = m0 * (1 + k / 100), a = box.querySelector('[data-mc="' + i + "," + j + '"]'), b = box.querySelector('[data-ad="' + i + "," + j + '"]'), c = box.querySelector('input[data-mm="' + j + '"][data-i="' + i + '"]');
+        if (a) a.textContent = isFinite(m0) ? f(mc, 1) : "–"; if (b) b.textContent = j && isFinite(m0) ? f(m0 * 0.05, 1) : "–"; if (c) c.placeholder = isFinite(m0) ? f(mc, 1) : "";
+      });
+    }
+    draw();
+    return { refresh: function (d) { if (d !== data) { data = d; draw(); } } };
+  }
+
+  function report2(D, d, r, img) {
+    var M = r.M;
+    if (!M || !M.R.length) { (r.warn || []).forEach(function (w) { D.text(w); }); return; }
+    var fig = 0, done = {}, CAPS = { stand: "Определение угла естественного откоса", graph: "Зависимость угла естественного откоса от влажности груза" };
+    function putFig(id) { if (done[id]) return; done[id] = 1; fig++; img(id, 16); D.para("Рисунок " + fig + " — " + CAPS[id], { align: "center", size: 10, after: 8 }); }
+    D.para([{ t: "Цель работы: ", bold: true }, "изучение условий и причин изменения угла естественного откоса навалочного груза в зависимости от изменения влажности груза."], { align: "just", indent: D.t.indent, after: 6 });
+    D.head("Подготовка исследования", { size: 13 });
+    D.text("Для изучения взяты образцы навалочного груза: " + M.R.map(function (o) { return o.n.toLowerCase(); }).join(", ") + ".");
+    D.text("Приборы: штатив для исследования устойчивости штабеля груза, мерный ящик, весы, линейка, видеорегистратор.");
+    D.text("Точность измерений: по весу — 1 г (в среднем 1 %), по размерам — 0,1 см, по углу наклона — 1°.");
+    D.head("Описание исследования", { size: 13 });
+    D.numbered(["Навалочный груз насыпается в ёмкость, измеряется его масса. Груз помещается на основание штатива (без ёмкости), затем последовательно изменяется угол наклона основания штатива (через градус). Угол наклона, при котором происходит смещение груза, — угол естественного откоса груза (рис. 1). Данные заносятся в таблицу.",
+      "Этот же образец засыпается обратно в ёмкость, туда добавляется вода до изменения исходной массы груза на 5 %. Смесь перемешивается, помещается на платформу, и измеряется угол естественного откоса. Данные заносятся в таблицу.",
+      "Исследования проводятся до изменения массы груза на 30 %.",
+      "Определяется относительная влажность исследуемого груза, при которой угол естественного откоса груза минимальный."]);
+    putFig("stand");
+    r.steps.forEach(function (s) {
+      if (s.kind !== "item") return;
+      D.head("Исследование № " + s.no + " (" + s.o.n.toLowerCase() + ")", { size: 13 });
+      (s.paras || []).forEach(function (t) { D.text(t); });
+      s.lines.forEach(function (l) { if (/^Пример/.test(l)) D.text(l, { after: 4 }); else D.formula(l); });
+      s.tables.forEach(function (tb) { D.para(tb.title, { size: 11, after: 2, keep: true }); D.table(tb.headers, tb.rows, { widths: tb.widths, size: tb.headers.length > 6 ? 9 : 10 }); });
+      if (s.concl.length) D.text([{ t: "Вывод по исследованию: ", bold: true }, s.concl.join(" ")], { after: 8 });
+      (s.figs || []).forEach(function (id) { if (id === "graph") putFig(id); });
+    });
+    var fin0 = r.steps.filter(function (s) { return s.kind === "fin"; })[0];
+    D.head("Вывод", { size: 13 });
+    (fin0 ? fin0.paras : []).forEach(function (t) { D.text(t); });
+  }
+
+  App.taskWork({
+    disc: "tomg", sec: "kon", tkey: "tomg-kon", discName: "Технология и организация морской перевозки грузов", id: "tomg-k2", order: 2, key: "tomg-k2",
+    file: "ТМПГ_Конаков_ЛР2_Навалочные", no: "ЛР 2", short: "ЛР №2",
+    eyebrow: "ТОМПГ · Конаков · Лабораторная работа №2", title: "Исследования свойств навалочных грузов",
+    titleTopic: "Исследования свойств навалочных грузов", titleKind: "Лабораторная работа",
+    desc: "Угол естественного откоса навалочного груза на наклоняемом штативе при увлажнении до +30 % массы (через 5 %): массы, добавленная вода, относительная влажность, минимальный угол, график и вывод.",
+    variants: 1, summary: false,
+    variantData: function () { return { variant: "1", items: ex2(), c: "" }; },
+    hint: "Методичка «Технология перевозки грузов морем», лабораторные работы, ч. I (2016), ЛР № 2, с. 8–9. Вариантов нет — это опыт: в примере методички дано только начало (песок, 415 г, угол 17°). Впишите углы, измеренные на штативе, — массы, влажность, минимальный угол, график и вывод посчитаются сами.",
+    sections: [
+      { title: "Исследования и замеры", note: "Исследований может быть несколько (руда, щебень, зерно, песок…) — каждое со своей таблицей. Таблица заодно подсказывает, сколько воды доливать на каждой ступени.", fields: [["_bulk", "", { custom: editor2 }]] },
+      { title: "Вывод (необязательно)", note: "Пусто — вывод формулируется автоматически по замерам. Свой текст заменит автоматический (каждый абзац — с новой строки).", fields: [["c", "Свой вывод", { area: true, rows: 4 }]] }
+    ],
+    figs: {
+      stand: { caption: "Определение угла естественного откоса", draw: drawStand },
+      graph: { caption: "Зависимость угла естественного откоса от влажности груза", draw: drawGraph }
+    },
+    solve: solve2, report: report2
   });
 })();
 
