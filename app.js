@@ -379,10 +379,11 @@ var App = (function () {
     return o;
   }
   function titleSave(o) { store.set(TKEY, o); }
-  var DEF_TEACHER = { tomg: "Доброквашин В.П." };
+  var DEF_TEACHER = { tomg: "Доброквашин В.П.", "tomg-kon": "Конаков А.Г." };   /* ключ — w.tkey (вкладка с другим преподавателем) или дисциплина */
   var DEF_DEPT = { miyus: "Управление судном" };   /* кафедра по дисциплине (если отличается от общей) */
   function deptOf(t, w) { return (w && t.depts && t.depts[w.disc]) || (w && DEF_DEPT[w.disc]) || t.dept || ""; }
-  function teacherOf(t, w) { return (w && t.teachers[w.disc]) || (w && DEF_TEACHER[w.disc]) || t.teacher || ""; }
+  function tkOf(w) { return w ? w.tkey || w.disc : ""; }
+  function teacherOf(t, w) { return (w && t.teachers[tkOf(w)]) || (w && DEF_TEACHER[tkOf(w)]) || t.teacher || ""; }
   function initials(fio) {
     var p = String(fio || "").trim().split(/\s+/);
     if (p.length < 2) return p[0] || "";
@@ -446,14 +447,14 @@ var App = (function () {
       '<label class="fld"><span>Учебное заведение</span><select data-f="org"><option value="univ"' + (t.org !== "college" ? " selected" : "") + '>МГУ им. Невельского (факультет)</option><option value="college"' + (t.org === "college" ? " selected" : "") + '>Морской инженерный колледж</option></select></label>' +
       inp("faculty", "Факультет", t.faculty) + inp("dept", "Кафедра" + (DEF_DEPT[w.disc] ? " — по «" + (discipline(w.disc).short || discipline(w.disc).name) + "»" : ""), deptOf(t, w)) + inp("group", "Группа (напр. 01.419)", t.group) +
       inp("student", "ФИО курсанта полностью", t.student, true) +
-      inp("teacher", "Проверил — по «" + (discipline(w.disc).short || discipline(w.disc).name) + "»", teacherOf(t, w)) +
+      inp("teacher", "Проверил — по «" + (discipline(w.disc).short || discipline(w.disc).name) + "»" + (function () { var sc = w.tkey && discipline(w.disc).sections ? discipline(w.disc).sections.filter(function (x) { return x.id === w.sec; })[0] : null; return sc ? ", вкладка «" + sc.name + "»" : ""; })(), teacherOf(t, w)) +
       inp("no", "Номер этой работы на титуле", workNo(w, t)) + inp("city", "Город", t.city) + inp("year", "Год", t.year) +
       '</div><p class="small">Эмблема МГУ им. Невельского ставится на титул всегда.</p>' +
       '<p class="small">Титульник включается и выключается кнопкой «Титульник» в каждой работе отдельно.</p></div>';
     ov.querySelectorAll("[data-f]").forEach(function (x) {
       x.addEventListener(x.tagName === "SELECT" ? "change" : "input", function () {
         var o = titleInfo(), k = x.dataset.f;
-        if (k === "no") o.no[w.id] = x.value; else if (k === "teacher") o.teachers[w.disc] = x.value; else if (k === "dept" && DEF_DEPT[w.disc]) o.depts[w.disc] = x.value; else o[k] = x.value;
+        if (k === "no") o.no[w.id] = x.value; else if (k === "teacher") o.teachers[tkOf(w)] = x.value; else if (k === "dept" && DEF_DEPT[w.disc]) o.depts[w.disc] = x.value; else o[k] = x.value;
         titleSave(o); onChange();
       });
     });
@@ -847,7 +848,7 @@ var App = (function () {
       });
     }
     App.register(cfg.disc, {
-      id: cfg.id, sec: cfg.sec, order: cfg.order, no: cfg.no, short: cfg.short, title: cfg.title, desc: cfg.desc,
+      id: cfg.id, sec: cfg.sec, tkey: cfg.tkey, order: cfg.order, no: cfg.no, short: cfg.short, title: cfg.title, desc: cfg.desc,
       titleTopic: cfg.titleTopic, titleKind: cfg.titleKind,
       titleExtra: function () { return !S.data ? "" : cfg.varText ? cfg.varText(S.data) : nVar.length > 1 ? "Вариант " + S.data.variant : ""; },
       render: render, _test: { solve: cfg.solve, variantData: cfg.variantData }
@@ -4042,6 +4043,607 @@ var LR1Engine = (function () {
         QA.forEach(function (q, i) { D.para([{ t: (i + 1) + ". " + q[0] + ". ", bold: true }, q[1]], { align: "just", after: 4 }); });
       }
     }
+  });
+})();
+
+/* ======================================================================
+   ТОМПГ → вкладка «Конаков»: работы строго по методичке
+   «Методические указания к выполнению лабораторных работ по дисциплине
+   „Технология перевозки грузов морем“», ч. I (Н. М. Аносов, В. П. Доброквашин,
+   А. Г. Конаков; МГУ им. Невельского, 2016).
+   ЛР № 1 «Исследования свойств древесины различных пород» (с. 6–8):
+   табл. 1 — исходные параметры, табл. 2 — через 15 минут, табл. 3 — изменения, %,
+   табл. 4 — через 1 час, табл. 5 — изменения, %; первый и второй выводы и общий вывод.
+   По пунктам цели работы (1–3): степень и интенсивность впитывания воды, объёмы
+   образцов, по желанию — высушивание.
+   Прежние работы ТОМПГ уходят во вкладку «Доброквашин».
+   ====================================================================== */
+(function () {
+  "use strict";
+  var f = App.f, esc = App.esc;
+  var DISC = App.discipline("tomg", "Технология и организация морской перевозки грузов", "ТОМПГ");
+  DISC.works.forEach(function (w) { if (!w.sec) w.sec = "dob"; });
+  DISC.sections = [
+    { id: "dob", name: "Доброквашин", desc: "Работы, сделанные раньше: ЛР 1 «Предварительный расчёт грузового плана судна», ЛР 2 «Коэффициент укладки и УПО», ЛР 2* (методичка 2016)" },
+    { id: "kon", name: "Конаков", desc: "Строго по методичке «Технология перевозки грузов морем», лабораторные работы, ч. I (Аносов, Доброквашин, Конаков, 2016)" }
+  ];
+
+  var FONT = '"Times New Roman","Liberation Serif",Times,serif';
+  var DIMS = ["L", "A", "B", "TA", "TB", "m"], D15 = ["A", "B", "m"], CROSS = ["A", "B", "TA", "TB"];
+  var HEAD = { L: "Длина", A: "Ширина А", B: "Ширина В", TA: "Толщина А", TB: "Толщина В", m: "Вес" };
+  var SYM = { L: "l", A: "b_{А}", B: "b_{В}", TA: "h_{А}", TB: "h_{В}", m: "m" };
+  var GEN = { L: "длина", A: "ширина на конце А", B: "ширина на конце В", TA: "толщина на конце А", TB: "толщина на конце В", m: "вес" };
+  var PREC = { L: 1, A: 0.1, B: 0.1, TA: 0.1, TB: 0.1, m: 1 };   /* линейка 1 мм, штангенциркуль 0,1 мм, весы 1 г */
+  var PK = [["", "не указана"], ["film", "в плёнке"], ["part", "частично (5 сторон)"], ["none", "без плёнки"]];
+  var PKT = { film: "упакован в плёнку", part: "частично упакован в плёнку (с пяти сторон)", none: "без плёнки", "": "" };
+  var PKL = {
+    film: ["Упакованный в плёнку образец", "Упакованные в плёнку образцы"],
+    part: ["Частично упакованный в плёнку (с пяти сторон) образец", "Частично упакованные в плёнку (с пяти сторон) образцы"],
+    none: ["Неупакованный в плёнку образец", "Неупакованные в плёнку образцы"],
+    "": ["Образец без указания упаковки", "Образцы без указания упаковки"]
+  };
+
+  /* пример методички (табл. 1, 2, 4; с. 6–7). «Сосна р1» и «Ель р1» табл. 2–5 — это «Сосна» и «Ель» табл. 1
+     (совпадают все проценты табл. 3 и 5). «Сосна р2» и «Ель р2» не включены: в табл. 1 их исходных данных нет. */
+  var EX = [
+    ["Сосна", "428,7 74,4 74,4 30,3 30,5 415", "74,5 74,4 415", "428 74,4 74,4 30,8 30,9 440"],
+    ["Ель", "492,5 92,5 93 34 35,1 655", "92,9 93,4 660", "493 92,8 93,2 34,5 35,4 680"],
+    ["Ясень", "377,5 104,1 104,1 21 20,9 440", "104,2 104,4 455", "377,5 104,9 104,6 21 21 465"],
+    ["Сосна 1", "685 45,4 45,4 18,6 18,5 320", "46,9 46,9 345", "686 47,3 47,8 19,6 19,6 385"],
+    ["Сосна 2", "349,5 45,8 45,6 18,4 18,7 175", "- - 195", "350 47,4 47,4 20 20,2 215"]
+  ];
+  function rowObj(keys, txt) { var o = {}, p = String(txt || "").split(/\s+/); keys.forEach(function (k, i) { o[k] = p[i] && p[i] !== "-" ? p[i] : ""; }); return o; }
+  function example() { return EX.map(function (e) { return { n: e[0], pk: "", s0: rowObj(DIMS, e[1]), s15: rowObj(D15, e[2]), s60: rowObj(DIMS, e[3]), sd: rowObj(DIMS, "") }; }); }
+  function blank(i) { return { n: "Образец " + i, pk: "", s0: rowObj(DIMS, ""), s15: rowObj(D15, ""), s60: rowObj(DIMS, ""), sd: rowObj(DIMS, "") }; }
+
+  /* ---------- числа и формат ---------- */
+  function num(s) {
+    if (s === null || s === undefined) return NaN;
+    var t = String(s).trim().replace(/\s+/g, "").replace(",", ".").replace(/^[−–]/, "-");
+    if (!t || /^[-–—]$/.test(t)) return NaN;
+    var x = Number(t); return isFinite(x) ? x : NaN;
+  }
+  function fv(x) { return isFinite(x) ? String(Math.round(x * 100) / 100).replace(".", ",") : "–"; }
+  function pf(x, n) { return f(x, n).replace(/^-/, "−"); }
+  function pc(x, n) { return isFinite(x) ? pf(x, n) + "%" : "–"; }
+  function pct(x, x0) { return isFinite(x) && isFinite(x0) && x0 !== 0 ? (x - x0) / x0 * 100 : NaN; }
+  function fin(a) { return a.filter(function (x) { return isFinite(x); }); }
+  function rng(v, n, unit) {
+    v = fin(v); unit = unit === undefined ? " %" : unit;
+    if (!v.length) return "–";
+    var a = Math.min.apply(null, v), b = Math.max.apply(null, v), sa = pf(a, n), sb = pf(b, n);
+    if (sa === sb) return sa + unit;
+    if (sa.charAt(0) === "−") return "от " + sa + " до " + sb + unit;
+    return sa + "–" + sb + unit;
+  }
+  function by(v, n, unit) { var t = rng(v, n, unit); return /^от /.test(t) ? t : "на " + t; }
+  function q(n) { return "«" + n + "»"; }
+  function list(names) { names = names.map(q); return names.length < 2 ? names.join("") : names.slice(0, -1).join(", ") + " и " + names[names.length - 1]; }
+  function mean(a) { a = fin(a); return a.length ? a.reduce(function (s, x) { return s + x; }, 0) / a.length : NaN; }
+  function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  /* ---------- расчёт ---------- */
+  function vol(v) {
+    if (![v.L, v.A, v.B, v.TA, v.TB].every(isFinite)) return NaN;
+    return v.L * (v.A + v.B) / 2 * (v.TA + v.TB) / 2 / 1000;   /* мм³ → см³ */
+  }
+  function model(d) {
+    var dry = d.dry === "1", tD = num(d.dryT);
+    var R = (d.samples || []).map(function (s, i) {
+      var o = { n: String(s.n || "").trim() || "Образец " + (i + 1), pk: s.pk || "", v0: {}, v15: {}, v60: {}, vd: {}, p15: {}, p60: {}, pd: {}, a15: {}, a60: {}, ad: {} };
+      DIMS.forEach(function (k) { o.v0[k] = num(s.s0 && s.s0[k]); o.v60[k] = num(s.s60 && s.s60[k]); o.vd[k] = dry ? num(s.sd && s.sd[k]) : NaN; });
+      D15.forEach(function (k) { o.v15[k] = num(s.s15 && s.s15[k]); o.p15[k] = pct(o.v15[k], o.v0[k]); o.a15[k] = o.v15[k] - o.v0[k]; });
+      DIMS.forEach(function (k) {
+        o.p60[k] = pct(o.v60[k], o.v0[k]); o.a60[k] = o.v60[k] - o.v0[k];
+        o.pd[k] = pct(o.vd[k], o.v0[k]); o.ad[k] = o.vd[k] - o.v0[k];
+      });
+      o.dm15 = o.v15.m - o.v0.m; o.dm1560 = o.v60.m - o.v15.m; o.dm60 = o.v60.m - o.v0.m;
+      o.I1 = o.dm15 / 15; o.I2 = o.dm1560 / 45;
+      o.V0 = vol(o.v0); o.V60 = vol(o.v60); o.Vd = vol(o.vd);
+      o.T0 = mean([o.v0.TA, o.v0.TB]);
+      o.out = o.v60.m - o.vd.m; o.outPct = o.dm60 > 0 ? o.out / o.dm60 * 100 : NaN; o.outI = isFinite(tD) && tD > 0 ? o.out / tD : NaN;
+      o.has = DIMS.some(function (k) { return isFinite(o.v0[k]) || isFinite(o.v60[k]); }) || D15.some(function (k) { return isFinite(o.v15[k]); });
+      return o;
+    }).filter(function (o) { return o.has; });
+    return { R: R, dry: dry, tD: tD, extra: d.extra !== "0" };
+  }
+
+  /* ---------- выводы ---------- */
+  function lvlOf(o, st, keys) {
+    var p = o["p" + st], a = o["a" + st], ks = keys.filter(function (k) { return isFinite(p[k]); });
+    if (!ks.length) return null;
+    var vals = ks.map(function (k) { return p[k]; });
+    var within = ks.every(function (k) { return Math.abs(a[k]) <= PREC[k] + 1e-9; });
+    var mx = Math.max.apply(null, vals.map(Math.abs));
+    return { lv: within ? 0 : mx < 1 ? 1 : 2, vals: vals, neg: vals.some(function (x) { return x <= -0.05; }) };
+  }
+  function dimTxt(st) { return st === "15" ? { nom: "ширина", gen: "ширины", pl: false } : { nom: "ширина и толщина", gen: "ширины и толщины", pl: true }; }
+  function grow(dt, neg) { return dt.pl ? (neg ? "изменились" : "увеличились") : (neg ? "изменилась" : "увеличилась"); }
+  function phrase(lv, sg, st, vals, neg) {
+    var dt = dimTxt(st), r = by(vals, 1);
+    if (lv === 0) return (sg ? "практически не изменил" : "практически не изменили") + " свои размеры (изменение " + dt.gen + " — в пределах точности измерения штангенциркулем, 0,1 мм)";
+    if (lv === 1) return (sg ? "незначительно изменил" : "незначительно изменили") + " свои размеры (" + dt.nom + " " + grow(dt, neg) + " " + r + ")";
+    return (sg ? "изменил" : "изменили") + " свои размеры: " + dt.nom + " " + grow(dt, neg) + " " + r;
+  }
+  function wTxt(vals) { var v = fin(vals); return (v.some(function (x) { return x <= -0.5; }) ? "изменился " : "увеличился ") + by(v, 0); }
+  function stageConcl(M, st) {
+    var per = st === "15" ? "за первые 15 минут пропитки" : "за 60 минут пропитки", keys = st === "15" ? ["A", "B"] : CROSS;
+    var rows = M.R.map(function (o) { return { o: o, l: lvlOf(o, st, keys), w: o["p" + st].m }; }).filter(function (x) { return x.l || isFinite(x.w); });
+    if (!rows.length) return "";
+    var out = [], noDim = rows.filter(function (x) { return !x.l; });
+    var byPk = M.R.some(function (o) { return o.pk; });
+    if (byPk) {
+      ["film", "part", "none", ""].forEach(function (pk) {
+        var g = rows.filter(function (x) { return x.o.pk === pk && x.l; });
+        if (!g.length) return;
+        var sg = g.length === 1, lv = Math.max.apply(null, g.map(function (x) { return x.l.lv; }));
+        var vals = [].concat.apply([], g.map(function (x) { return x.l.vals; })), neg = g.some(function (x) { return x.l.neg; });
+        var w = g.map(function (x) { return x.w; });
+        out.push(PKL[pk][sg ? 0 : 1] + " (" + list(g.map(function (x) { return x.o.n; })) + ") " + per + " " + phrase(lv, sg, st, vals, neg) + (fin(w).length ? "; вес " + wTxt(w) : "") + ".");
+      });
+    } else {
+      var parts = [];
+      [0, 1, 2].forEach(function (lv) {
+        var g = rows.filter(function (x) { return x.l && x.l.lv === lv; });
+        if (!g.length) return;
+        var sg = g.length === 1, vals = [].concat.apply([], g.map(function (x) { return x.l.vals; })), neg = g.some(function (x) { return x.l.neg; });
+        var ph = phrase(lv, sg, st, vals, neg), nm = (sg ? "образец " : "образцы ") + list(g.map(function (x) { return x.o.n; }));
+        var cut = ph.indexOf(lv === 2 ? ":" : " (");
+        parts.push(ph.slice(0, cut) + " " + nm + ph.slice(cut));
+      });
+      if (parts.length) out.push(cap(per) + " " + parts.join("; ") + ".");
+      var wr = rows.filter(function (x) { return isFinite(x.w); });
+      if (wr.length) {
+        var top = wr.slice().sort(function (a, b) { return b.w - a.w; })[0];
+        out.push("Вес образцов " + wTxt(wr.map(function (x) { return x.w; })) + (wr.length > 1 ? ", больше всего — у образца " + q(top.o.n) + " (" + pf(top.w, 0) + " %)" : "") + ".");
+      }
+    }
+    if (noDim.length) {
+      var sg2 = noDim.length === 1, dt = dimTxt(st);
+      out.push(cap(dt.nom) + " " + (sg2 ? "образца " : "образцов ") + list(noDim.map(function (x) { return x.o.n; })) + (st === "15" ? " через 15 минут" : " через 1 час") + " не " + (dt.pl ? "измерялись" : "измерялась") +
+        (byPk ? "; вес " + wTxt(noDim.map(function (x) { return x.w; })) : "") + ".");
+    }
+    if (st === "60") {
+      var Ls = M.R.filter(function (o) { return isFinite(o.p60.L); });
+      if (Ls.length) {
+        var inL = Ls.every(function (o) { return Math.abs(o.a60.L) <= PREC.L + 1e-9; }), cr = fin([].concat.apply([], M.R.map(function (o) { return CROSS.map(function (k) { return o.p60[k]; }); })));
+        out.push("Длина образцов (вдоль волокон) изменилась " + by(Ls.map(function (o) { return o.p60.L; }), 1) +
+          (inL ? " — в пределах точности измерения линейкой (1 мм)" : "") +
+          (cr.length ? ", тогда как поперёк волокон размеры увеличились до " + pf(Math.max.apply(null, cr), 1) + " %" : "") + ".");
+      }
+    }
+    return out.join(" ");
+  }
+  function ranks(a) {
+    var ix = a.map(function (v, i) { return [v, i]; }).sort(function (x, y) { return x[0] - y[0]; }), r = [];
+    for (var i = 0; i < ix.length;) { var j = i; while (j + 1 < ix.length && ix[j + 1][0] === ix[i][0]) j++; for (var k = i; k <= j; k++) r[ix[k][1]] = (i + j) / 2 + 1; i = j + 1; }
+    return r;
+  }
+  function spearman(x, y) {
+    var rx = ranks(x), ry = ranks(y), mx = mean(rx), my = mean(ry), sxy = 0, sx = 0, sy = 0;
+    for (var i = 0; i < x.length; i++) { sxy += (rx[i] - mx) * (ry[i] - my); sx += (rx[i] - mx) * (rx[i] - mx); sy += (ry[i] - my) * (ry[i] - my); }
+    return sx && sy ? sxy / Math.sqrt(sx * sy) : 0;
+  }
+  function finalConcl(M) {
+    var R = M.R, out = [];
+    var g = R.filter(function (o) { return isFinite(o.p60.m); });
+    if (g.length) {
+      var top = g.slice().sort(function (a, b) { return b.p60.m - a.p60.m; }), none = g.filter(function (o) { return Math.abs(o.dm60) <= PREC.m; });
+      out.push("Древесина поглощает воду: за 1 час пропитки масса образцов увеличилась " + by(g.map(function (o) { return o.p60.m; }), 0) +
+        (g.length > 1 ? " (наибольшее увеличение — у образца " + q(top[0].n) + ", " + pf(top[0].p60.m, 0) + " %; наименьшее — у образца " + q(top[top.length - 1].n) + ", " + pf(top[top.length - 1].p60.m, 0) + " %)" : "") +
+        (none.length ? (none.length === 1 ? "; масса образца " : "; масса образцов ") + list(none.map(function (o) { return o.n; })) + " осталась в пределах точности взвешивания (1 г)" : "") + ".");
+    }
+    var it = R.filter(function (o) { return isFinite(o.I1) && isFinite(o.I2); });
+    var fast = it.filter(function (o) { return o.I1 > o.I2 + 1e-9; }), slow = it.filter(function (o) { return o.I1 < o.I2 - 1e-9; });
+    if (fast.length) out.push((fast.length === 1 ? "У образца " : "У образцов ") + list(fast.map(function (o) { return o.n; })) + " интенсивность впитывания в первые 15 минут (" + rng(fast.map(function (o) { return o.I1; }), 2, " г/мин") +
+      ") выше, чем в следующие 45 минут (" + rng(fast.map(function (o) { return o.I2; }), 2, " г/мин") + "): по мере насыщения поверхностного слоя древесины впитывание замедляется.");
+    if (slow.length) {
+      var prot = slow.every(function (o) { return o.pk === "film" || o.pk === "part"; });
+      out.push((slow.length === 1 ? "У образца " : "У образцов ") + list(slow.map(function (o) { return o.n; })) + (fast.length ? ", наоборот," : "") + " в первые 15 минут вода поступала медленнее (" + rng(slow.map(function (o) { return o.I1; }), 2, " г/мин") +
+        "), чем в следующие 45 минут (" + rng(slow.map(function (o) { return o.I2; }), 2, " г/мин") + ")" + (prot ? " — плёнка задерживает проникновение воды в древесину" : "") + ".");
+    }
+    var cr = R.map(function (o) { return { o: o, v: fin(CROSS.map(function (k) { return o.p60[k]; })) }; }).filter(function (x) { return x.v.length; });
+    var Ls = R.filter(function (o) { return isFinite(o.p60.L); });
+    if (cr.length && Ls.length) {
+      var mxc = cr.map(function (x) { return { o: x.o, m: Math.max.apply(null, x.v) }; }).sort(function (a, b) { return b.m - a.m; })[0];
+      var mxL = Math.max.apply(null, Ls.map(function (o) { return Math.abs(o.p60.L); }));
+      if (mxc.m > mxL + 0.3) out.push("При набухании размеры поперёк волокон (ширина и толщина) увеличились до " + pf(mxc.m, 1) + " % (образец " + q(mxc.o.n) + "), а вдоль волокон длина изменилась не более чем на " + pf(mxL, 1) +
+        " % — древесина набухает в основном поперёк волокон (анизотропия свойств древесины).");
+    }
+    var tg = R.filter(function (o) { return isFinite(o.T0) && isFinite(o.p60.m); });
+    if (tg.length >= 3 && spearman(tg.map(function (o) { return o.T0; }), tg.map(function (o) { return o.p60.m; })) <= -0.6) {
+      var byT = tg.slice().sort(function (a, b) { return a.T0 - b.T0; }), t0 = byT[0].T0, t1 = byT[byT.length - 1].T0;
+      var thin = tg.filter(function (o) { return o.T0 <= t0 + 0.05; }), thick = tg.filter(function (o) { return o.T0 >= t1 - 0.05; });
+      var tR = function (g) { var v = g.map(function (o) { return o.T0; }), a = fv(Math.min.apply(null, v)), b = fv(Math.max.apply(null, v)); return a === b ? a : a + "–" + b; };
+      var nm = function (o) { return o.n; }, pm = function (o) { return o.p60.m; };
+      out.push("Чем тоньше брусок, тем больше относительное увеличение массы: у " + (thin.length > 1 ? "самых тонких образцов " : "самого тонкого образца ") + list(thin.map(nm)) + " (толщина " + tR(thin) + " мм) масса увеличилась " + by(thin.map(pm), 0) +
+        ", у " + (thick.length > 1 ? "самых толстых " : "самого толстого ") + list(thick.map(nm)) + " (" + tR(thick) + " мм) — " + by(thick.map(pm), 0) + ": у тонких брусков больше площадь поверхности, через которую впитывается вода, в расчёте на единицу массы.");
+    }
+    var fl = g.filter(function (o) { return o.pk === "film"; }), nf = g.filter(function (o) { return o.pk === "none"; });
+    if (fl.length && nf.length) out.push("Упаковка в плёнку защищает древесину от намокания: у упакованных образцов масса за 1 час увеличилась " + by(fl.map(function (o) { return o.p60.m; }), 0) +
+      ", у неупакованных — " + by(nf.map(function (o) { return o.p60.m; }), 0) + ".");
+    if (M.dry) {
+      var dr = R.filter(function (o) { return isFinite(o.out) && o.dm60 > 0; });
+      if (dr.length) out.push("При высушивании при комнатной температуре" + (isFinite(M.tD) ? " в течение " + fv(M.tD) + " ч" : "") + " образцы отдали " + rng(dr.map(function (o) { return o.outPct; }), 0) +
+        " поглощённой воды" + (fin(dr.map(function (o) { return o.outI; })).length ? " (интенсивность отдачи — " + rng(dr.map(function (o) { return o.outI; }), 1, " г/ч") + ")" : "") +
+        (dr.every(function (o) { return isFinite(o.outI) && o.outI < o.dm60; }) ? "; вода отдаётся медленнее, чем впитывается (за 1 час пропитки образцы поглотили " + rng(dr.map(function (o) { return o.dm60; }), 0, " г") + " воды)" : "") + ".");
+    }
+    out.push("Следовательно, при перевозке лесных грузов морем необходимо учитывать их способность впитывать воду: при намокании (особенно палубного груза) масса груза растёт, что сказывается на загрузке и остойчивости судна, а набухание и последующая усушка древесины меняют размеры пакетов и ослабляют их крепление; упаковка в плёнку защищает груз от намокания.");
+    return out;
+  }
+
+  /* ---------- таблицы ---------- */
+  var W7 = [3.1, 2.25, 2.25, 2.25, 2.25, 2.25, 2.05], W4 = [4.6, 3.8, 3.8, 3.8];
+  function tParams(M, st) {
+    var keys = st === "15" ? D15 : DIMS;
+    return { headers: ["Образцы"].concat(keys.map(function (k) { return HEAD[k] + (k === "m" ? ", г" : ", мм"); })), widths: st === "15" ? W4 : W7,
+      rows: M.R.map(function (o) { return [o.n].concat(keys.map(function (k) { return fv(o["v" + st][k]); })); }) };
+  }
+  function tPct(M, st) {
+    var keys = st === "15" ? D15 : DIMS;
+    return { headers: ["Образцы"].concat(keys.map(function (k) { return HEAD[k]; })), widths: st === "15" ? W4 : W7,
+      rows: M.R.map(function (o) { return [o.n].concat(keys.map(function (k) { return pc(o["p" + st][k], k === "m" ? 0 : 1); })); }) };
+  }
+  function exLines(M, st) {
+    var keys = st === "15" ? ["A", "B"] : ["TA", "TB", "A", "B", "L"];
+    var c = M.R.filter(function (o) { return isFinite(o["p" + st].m) && keys.some(function (k) { return isFinite(o["p" + st][k]); }); });
+    if (!c.length) return null;
+    var o = st === "15" ? (c.filter(function (x) { return Math.abs(x.a15.m) > 0 && Math.abs(x.a15.A) > 0; })[0] || c[0]) : c.slice().sort(function (a, b) { return b.p60.m - a.p60.m; })[0];
+    var p = o["p" + st], v = o["v" + st], k = keys.filter(function (kk) { return isFinite(p[kk]); })[0];
+    function one(kk, n) { return "Δ" + SYM[kk] + " = (" + fv(v[kk]) + " − " + fv(o.v0[kk]) + ") / " + fv(o.v0[kk]) + " · 100 % = " + pf(p[kk], 2) + " % ≈ " + pf(p[kk], n) + " %"; }
+    var ls = [one(k, 1), one("m", 0)];
+    if (st === "60" && isFinite(p.L)) ls.splice(1, 0, one("L", 1));
+    return { o: o, lines: ls, k: k };
+  }
+
+  /* ---------- solve ---------- */
+  function solve(d) {
+    var M = model(d), R = M.R, st = [], warn = [];
+    if (!R.length) return { steps: [], warn: ["Заполните замеры образцов (вкладка «Вводные данные») или нажмите «Пример из методички»."], M: M };
+    R.forEach(function (o) {
+      var noM = !isFinite(o.v0.m), noD = !["L", "A", "B", "TA", "TB"].some(function (k) { return isFinite(o.v0[k]); });
+      if (noM || noD) warn.push("У образца " + q(o.n) + " в табл. 1 не заполнен" + (noM && noD ? "ы исходные размеры и вес" : noM ? " исходный вес" : "ы исходные размеры") + " — изменения в процентах для " + (noM && noD ? "него" : noM ? "веса" : "размеров") + " не считаются.");
+      [["15", "через 15 минут"], ["60", "через 1 час"]].forEach(function (s) {
+        if (isFinite(o["p" + s[0]].m) && o["p" + s[0]].m < -0.5) warn.push("Вес образца " + q(o.n) + " " + s[1] + " меньше исходного — проверьте замер.");
+        (s[0] === "15" ? ["A", "B"] : ["L", "A", "B", "TA", "TB"]).forEach(function (k) { if (Math.abs(o["p" + s[0]][k]) > 30) warn.push("Образец " + q(o.n) + ": " + GEN[k] + " " + s[1] + " изменилась на " + pf(o["p" + s[0]][k], 1) + " % — похоже на опечатку."); });
+      });
+    });
+    var c1 = String(d.c1 || "").trim(), c2 = String(d.c2 || "").trim(), c3 = String(d.c3 || "").trim();
+    var C1 = c1 || stageConcl(M, "15"), C2 = c2 || stageConcl(M, "60"), C3 = c3 ? c3.split(/\n+/) : finalConcl(M);
+    var tn = 0, T = function () { return ++tn; };
+    var w15 = fin(R.map(function (o) { return o.p15.m; })), b15 = fin([].concat.apply([], R.map(function (o) { return [o.p15.A, o.p15.B]; })));
+    var w60 = fin(R.map(function (o) { return o.p60.m; })), c60 = fin([].concat.apply([], R.map(function (o) { return CROSS.map(function (k) { return o.p60[k]; }); }))), l60 = fin(R.map(function (o) { return o.p60.L; }));
+    st.push({ no: 1, noLabel: "", title: "Исходные параметры образцов", kind: "t1", lines: [], cap: "Таблица " + T() + " — Исходные параметры", tables: [tParams(M, "0")], figs: ["sample"] });
+    st.push({ no: 2, noLabel: "", title: "Параметры через 15 минут после погружения в воду", kind: "t2", lines: [], cap: "Таблица " + T() + " — Параметры через 15 минут после погружения в воду", tables: [tParams(M, "15")] });
+    var e15 = exLines(M, "15");
+    st.push({ no: 3, noLabel: "", title: "Изменения параметров в процентах (через 15 минут)", kind: "t3", cap: "Таблица " + T() + " — Изменения параметров в процентах",
+      paras: ["Изменение каждого параметра в процентах от исходного значения (табл. 1):"], lines: ["ΔX = (X − X_{0}) / X_{0} · 100 %"].concat(e15 ? ["Пример — образец " + q(e15.o.n) + ":"].concat(e15.lines) : []),
+      tables: [tPct(M, "15")], concl: ["Первый вывод: ", C1], after: C1 ? ["Первый вывод: " + C1] : [],
+      answer: (w15.length ? "вес " + rng(w15, 0) : "") + (b15.length ? (w15.length ? "; " : "") + "ширина " + rng(b15, 1) : "") });
+    st.push({ no: 4, noLabel: "", title: "Параметры образцов через 1 час после погружения в воду", kind: "t4", lines: [], cap: "Таблица " + T() + " — Параметры образцов через 1 час после погружения в воду", tables: [tParams(M, "60")] });
+    var e60 = exLines(M, "60");
+    st.push({ no: 5, noLabel: "", title: "Изменения в процентах (через 1 час)", kind: "t5", cap: "Таблица " + T() + " — Изменения в процентах",
+      paras: ["Изменения через 1 час пропитки считаются по той же формуле относительно исходных параметров (табл. 1)."], lines: e60 ? ["Пример — образец " + q(e60.o.n) + ":"].concat(e60.lines) : [],
+      tables: [tPct(M, "60")], figs: ["dims"], concl: ["Второй вывод: ", C2], after: C2 ? ["Второй вывод: " + C2] : [],
+      answer: (w60.length ? "вес " + rng(w60, 0) : "") + (c60.length ? "; ширина и толщина " + rng(c60, 1) : "") + (l60.length ? "; длина " + rng(l60, 1) : "") });
+    if (M.extra) {
+      var ir = R.filter(function (o) { return isFinite(o.dm15) || isFinite(o.dm60); });
+      var ie = ir.filter(function (o) { return isFinite(o.I1) && isFinite(o.I2); }).sort(function (a, b) { return b.p60.m - a.p60.m; })[0];
+      st.push({ no: 6, noLabel: "", title: "Степень и интенсивность впитывания воды", kind: "t6", cap: "Таблица " + T() + " — Степень и интенсивность впитывания воды",
+        paras: ["Степень впитывания — увеличение массы образца в процентах от исходной (п. 1 цели работы); интенсивность впитывания — масса воды, поглощённая образцом за 1 минуту, на интервалах 0–15 и 15–60 минут:"],
+        lines: ["W = (m_{60} − m_{0}) / m_{0} · 100 %", "I_{0–15} = (m_{15} − m_{0}) / 15,   I_{15–60} = (m_{60} − m_{15}) / 45, г/мин"].concat(ie ? ["Пример — образец " + q(ie.n) + ": I_{0–15} = (" + fv(ie.v15.m) + " − " + fv(ie.v0.m) + ") / 15 = " + pf(ie.I1, 2) + " г/мин;  I_{15–60} = (" + fv(ie.v60.m) + " − " + fv(ie.v15.m) + ") / 45 = " + pf(ie.I2, 2) + " г/мин"] : []),
+        tables: [{ headers: ["Образцы", "Δm за 0–15 мин, г", "Δm за 15–60 мин, г", "Δm за 1 ч, г", "W за 1 ч, %", "I_{0–15}, г/мин", "I_{15–60}, г/мин"], widths: W7,
+          rows: ir.map(function (o) { return [o.n, fv(o.dm15), fv(o.dm1560), fv(o.dm60), isFinite(o.p60.m) ? pf(o.p60.m, 1) : "–", isFinite(o.I1) ? pf(o.I1, 2) : "–", isFinite(o.I2) ? pf(o.I2, 2) : "–"]; }) }],
+        figs: ["dyn"], answer: fin(ir.map(function (o) { return o.I1; })).length ? "I₀₋₁₅ = " + rng(ir.map(function (o) { return o.I1; }), 2, " г/мин") + "; I₁₅₋₆₀ = " + rng(ir.map(function (o) { return o.I2; }), 2, " г/мин") : "" });
+      var vr = R.filter(function (o) { return isFinite(o.V0); });
+      if (vr.length) {
+        var ve = vr[0];
+        st.push({ no: 7, noLabel: "", title: "Объём образцов", kind: "t7", cap: "Таблица " + T() + " — Объём образцов до и после пропитки",
+          paras: ["Объём бруска (п. 3 цели работы) — по длине и средним ширине и толщине на концах А и В:"],
+          lines: ["V = l · (b_{А} + b_{В}) / 2 · (h_{А} + h_{В}) / 2", "Пример — образец " + q(ve.n) + ": V_{0} = " + fv(ve.v0.L) + " · (" + fv(ve.v0.A) + " + " + fv(ve.v0.B) + ") / 2 · (" + fv(ve.v0.TA) + " + " + fv(ve.v0.TB) + ") / 2 = " + f(ve.V0 * 1000, 0) + " мм³ = " + f(ve.V0, 1) + " см³"],
+          tables: [{ headers: ["Образцы", "V_{0}, см³", "V через 1 ч, см³", "ΔV, см³", "ΔV, %"], widths: [4.2, 3.1, 3.1, 3.0, 2.8],
+            rows: vr.map(function (o) { return [o.n, f(o.V0, 1), isFinite(o.V60) ? f(o.V60, 1) : "–", isFinite(o.V60) ? pf(o.V60 - o.V0, 1) : "–", isFinite(o.V60) ? pf(pct(o.V60, o.V0), 1) : "–"]; }) }],
+          answer: "ΔV = " + rng(vr.map(function (o) { return pct(o.V60, o.V0); }), 1) });
+      }
+    }
+    if (M.dry) {
+      var dR = R.filter(function (o) { return DIMS.some(function (k) { return isFinite(o.vd[k]); }); });
+      var tTxt = isFinite(M.tD) ? fv(M.tD) + " ч" : "";
+      st.push({ no: 8, noLabel: "", title: "Параметры образцов после высушивания" + (tTxt ? " (" + tTxt + ")" : ""), kind: "t8", cap: "Таблица " + T() + " — Параметры образцов после высушивания при комнатной температуре" + (tTxt ? " (" + tTxt + ")" : ""),
+        paras: ["После пропитки образцы высушивались при комнатной температуре" + (tTxt ? " в течение " + tTxt : "") + " (п. 2 цели работы), затем все параметры измерены повторно."], lines: [],
+        tables: [{ headers: tParams(M, "d").headers, widths: W7, rows: dR.map(function (o) { return [o.n].concat(DIMS.map(function (k) { return fv(o.vd[k]); })); }) }] });
+      st.push({ no: 9, noLabel: "", title: "Отдача воды при высушивании", kind: "t9", cap: "Таблица " + T() + " — Изменения после высушивания относительно исходных параметров и отдача воды",
+        paras: ["Отдача воды — уменьшение массы после высушивания по сравнению с массой через 1 час пропитки; доля отданной воды — от массы воды, поглощённой за 1 час:"],
+        lines: ["Δm_{отд} = m_{60} − m_{с},   δ = Δm_{отд} / (m_{60} − m_{0}) · 100 %" + (tTxt ? ",   I_{отд} = Δm_{отд} / t_{с}, г/ч" : "")],
+        tables: [{ headers: ["Образцы", "Δl, %", "Δb (ср.), %", "Δh (ср.), %", "Δm к m_{0}, %", "Δm_{отд}, г", "δ, %"], widths: W7,
+          rows: dR.map(function (o) { var pn = function (x, n) { return isFinite(x) ? pf(x, n) : "–"; }; return [o.n, pn(o.pd.L, 1), pn(mean([o.pd.A, o.pd.B]), 1), pn(mean([o.pd.TA, o.pd.TB]), 1), pn(o.pd.m, 0), fv(o.out), pn(o.outPct, 0)]; }) }],
+        answer: fin(dR.map(function (o) { return o.outPct; })).length ? "отдано " + rng(dR.map(function (o) { return o.outPct; }), 0) + " поглощённой воды" : "" });
+    }
+    st.push({ no: 10, noLabel: "", title: "Вывод", kind: "fin", lines: [], paras: C3 });
+    st.forEach(function (s) { (s.tables || []).forEach(function (tb) { tb.title = s.cap; }); });
+    return { steps: st, warn: warn, M: M };
+  }
+
+  /* ---------- рисунки ---------- */
+  var SER = ["#1f4e9c", "#c0392b", "#2e8b57", "#d4820f", "#7b3fa0", "#5d6d7e", "#b5651d", "#0f8b8d", "#8e1e5a", "#556b2f"];
+  function cvSet(cv, W, H) { cv.width = W; cv.height = H; var c = cv.getContext("2d"); c.fillStyle = "#fff"; c.fillRect(0, 0, W, H); c.lineJoin = "round"; c.lineCap = "round"; return c; }
+  function tx(c, s, x, y, o) {
+    o = o || {}; var size = o.size || 28;
+    var parts = String(s).split(/(_\{[^}]*\})/).filter(function (p) { return p !== ""; });
+    function fnt(sub) { return (o.italic ? "italic " : "") + (o.bold ? "bold " : "") + (sub ? Math.round(size * 0.72) : size) + "px " + FONT; }
+    var w = 0, seg = parts.map(function (p) { var sub = /^_\{/.test(p), t = sub ? p.slice(2, -1) : p; c.font = fnt(sub); var ww = c.measureText(t).width; w += ww; return { t: t, sub: sub, w: ww }; });
+    c.save(); c.translate(x, y); if (o.rot) c.rotate(o.rot);
+    var x0 = o.align === "left" ? 0 : o.align === "right" ? -w : -w / 2;
+    if (o.bg) { c.fillStyle = o.bg; c.fillRect(x0 - 6, -size * 0.66, w + 12, size * 1.32); }
+    c.fillStyle = o.color || "#111"; c.textBaseline = "middle"; c.textAlign = "left";
+    seg.forEach(function (sg) { c.font = fnt(sg.sub); c.fillText(sg.t, x0, sg.sub ? size * 0.3 : 0); x0 += sg.w; });
+    c.restore(); return w;
+  }
+  function ln(c, pts, w, col, dash) {
+    c.beginPath(); pts.forEach(function (p, i) { if (i) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); });
+    c.lineWidth = w || 2; c.strokeStyle = col || "#111"; c.setLineDash(dash || []); c.stroke(); c.setLineDash([]);
+  }
+  function arrowHead(c, x, y, ang, sz, col) {
+    c.beginPath(); c.moveTo(x, y); c.lineTo(x - sz * Math.cos(ang - 0.35), y - sz * Math.sin(ang - 0.35)); c.lineTo(x - sz * Math.cos(ang + 0.35), y - sz * Math.sin(ang + 0.35)); c.closePath(); c.fillStyle = col || "#111"; c.fill();
+  }
+  function dimLine(c, p1, p2, col) {
+    ln(c, [p1, p2], 2.2, col); var a = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]);
+    arrowHead(c, p2[0], p2[1], a, 18, col); arrowHead(c, p1[0], p1[1], a + Math.PI, 18, col);
+  }
+  function drawSample(cv, LK) {
+    var W = 1600, H = 660, c = cvSet(cv, W, H); cv._cm = 14.5;
+    var x0 = 330, y0 = 430, Lp = 920, Tp = 150, dx = 170, dy = -140;   /* передняя грань l × h, глубина (ширина) — косоугольная */
+    var A = [x0, y0], B = [x0 + Lp, y0], C = [x0 + Lp, y0 - Tp], D = [x0, y0 - Tp];
+    var sh = function (p) { return [p[0] + dx, p[1] + dy]; };
+    function poly(pts, fill) { c.beginPath(); pts.forEach(function (p, i) { if (i) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); }); c.closePath(); c.fillStyle = fill; c.fill(); c.lineWidth = 3.5; c.strokeStyle = "#1b1b1b"; c.stroke(); }
+    poly([A, B, C, D], "#E9D2AE");
+    poly([D, C, sh(C), sh(D)], "#F3E2C4");
+    poly([B, sh(B), sh(C), C], "#D9B98A");
+    /* волокна вдоль длины */
+    c.save(); c.strokeStyle = "rgba(120,80,30,.45)"; c.lineWidth = 2;
+    for (var i = 1; i <= 5; i++) { var t = i / 6, ya = y0 - Tp * t; c.beginPath(); c.moveTo(x0 + 6, ya); for (var xx = 0; xx <= Lp - 12; xx += 20) c.lineTo(x0 + 6 + xx, ya + Math.sin(xx / 70 + i) * 3); c.stroke(); }
+    for (var j = 1; j <= 4; j++) { var u = j / 5, xa = x0 + dx * u, yb = y0 - Tp + dy * u; c.beginPath(); c.moveTo(xa + 8, yb); for (var x2 = 0; x2 <= Lp - 16; x2 += 20) c.lineTo(xa + 8 + x2, yb + Math.sin(x2 / 80 + j) * 2.5); c.stroke(); }
+    c.restore();
+    /* торцы — годичные кольца */
+    c.save(); c.strokeStyle = "rgba(110,70,25,.5)"; c.lineWidth = 2;
+    var cx = (B[0] + sh(C)[0]) / 2 + 10, cy = (B[1] + sh(C)[1]) / 2 + 30;
+    for (var r = 30; r <= 120; r += 30) { c.beginPath(); c.arc(cx + 40, cy + 60, r, Math.PI * 1.05, Math.PI * 1.55); c.stroke(); }
+    c.restore();
+    var ink = "#1b1b1b";
+    /* длина */
+    dimLine(c, [A[0], y0 + 70], [B[0], y0 + 70], ink); ln(c, [A, [A[0], y0 + 92]], 1.5, ink); ln(c, [B, [B[0], y0 + 92]], 1.5, ink);
+    tx(c, "Длина l", (A[0] + B[0]) / 2, y0 + 108, { size: 34, italic: true });
+    /* конец А (слева): толщина и ширина */
+    dimLine(c, [x0 - 70, y0], [x0 - 70, y0 - Tp], ink); ln(c, [A, [x0 - 92, y0]], 1.5, ink); ln(c, [D, [x0 - 92, y0 - Tp]], 1.5, ink);
+    tx(c, "h_{А}", x0 - 120, y0 - Tp / 2, { size: 34, italic: true });
+    var d1 = [D[0] - 60, D[1]], d2 = [sh(D)[0] - 60, sh(D)[1]];
+    ln(c, [D, d1], 1.5, ink); ln(c, [sh(D), d2], 1.5, ink); dimLine(c, [d1[0] + 10, d1[1]], [d2[0] + 10, d2[1]], ink);
+    tx(c, "b_{А}", (d1[0] + d2[0]) / 2 - 50, (d1[1] + d2[1]) / 2, { size: 34, italic: true });
+    /* конец В (справа): толщина и ширина */
+    var e1 = [sh(B)[0] + 70, sh(B)[1]], e2 = [sh(C)[0] + 70, sh(C)[1]];
+    ln(c, [sh(B), [e1[0] + 22, e1[1]]], 1.5, ink); ln(c, [sh(C), [e2[0] + 22, e2[1]]], 1.5, ink); dimLine(c, e1, e2, ink);
+    tx(c, "h_{В}", e1[0] + 58, (e1[1] + e2[1]) / 2, { size: 34, italic: true });
+    var f1 = [B[0] + 26, B[1] + 26], f2 = [sh(B)[0] + 26, sh(B)[1] + 26];
+    dimLine(c, f1, f2, ink); tx(c, "b_{В}", (f1[0] + f2[0]) / 2 + 52, (f1[1] + f2[1]) / 2 + 16, { size: 34, italic: true });
+    /* подписи концов */
+    tx(c, "Конец А", x0 + 40, y0 - Tp - 175, { size: 30, bold: true, align: "left" });
+    ln(c, [[x0 + 90, y0 - Tp - 150], [x0 + 60, y0 - Tp - 40]], 1.6, ink); arrowHead(c, x0 + 60, y0 - Tp - 40, Math.atan2(110, -30), 16, ink);
+    tx(c, "Конец В", B[0] + dx - 60, y0 - Tp + dy - 70, { size: 30, bold: true, align: "right" });
+    ln(c, [[B[0] + dx - 100, y0 - Tp + dy - 48], [B[0] + dx - 20, y0 - Tp + dy + 30]], 1.6, ink); arrowHead(c, B[0] + dx - 20, y0 - Tp + dy + 30, Math.atan2(78, 80), 16, ink);
+    /* направление волокон */
+    var gy = y0 - Tp + dy * 0.5 - 12; ln(c, [[x0 + 330, gy - 70], [x0 + 650, gy - 70]], 2, "#6b4a1f"); arrowHead(c, x0 + 650, gy - 70, 0, 18, "#6b4a1f");
+    tx(c, "направление волокон", x0 + 490, gy - 100, { size: 27, italic: true, color: "#6b4a1f" });
+    tx(c, "Вес m — на лабораторных весах; b и h — штангенциркулем на двух концах бруска (А и В); l — линейкой", W / 2, H - 34, { size: 26, color: "#333" });
+  }
+  function niceStep(span, n) { var raw = span / n, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p; }
+  function marker(c, k, x, y, col) {
+    var s = 11; c.fillStyle = col; c.strokeStyle = "#fff"; c.lineWidth = 2; c.beginPath();
+    k = k % 5;
+    if (k === 0) c.arc(x, y, s, 0, Math.PI * 2);
+    else if (k === 1) c.rect(x - s, y - s, 2 * s, 2 * s);
+    else if (k === 2) { c.moveTo(x, y - s * 1.2); c.lineTo(x + s * 1.1, y + s * 0.8); c.lineTo(x - s * 1.1, y + s * 0.8); c.closePath(); }
+    else if (k === 3) { c.moveTo(x, y - s * 1.25); c.lineTo(x + s * 1.1, y); c.lineTo(x, y + s * 1.25); c.lineTo(x - s * 1.1, y); c.closePath(); }
+    else { c.moveTo(x - s, y - s); c.lineTo(x + s, y + s); c.moveTo(x + s, y - s); c.lineTo(x - s, y + s); c.strokeStyle = col; c.lineWidth = 5; c.stroke(); return; }
+    c.fill(); c.stroke();
+  }
+  function axesY(c, x1, x2, y1, y2, lo, hi, label, n) {
+    var step = niceStep(hi - lo || 1, n || 6), a = Math.floor(lo / step) * step, b = Math.ceil(hi / step) * step;
+    if (b - a < step) b = a + step;
+    var Y = function (v) { return y2 - (v - a) / (b - a) * (y2 - y1); };
+    var dec = step >= 1 && Math.abs(step - Math.round(step)) < 1e-9 ? 0 : Math.abs(step * 10 - Math.round(step * 10)) < 1e-9 ? 1 : 2;
+    for (var v = a; v <= b + 1e-9; v += step) {
+      var yy = Y(v); ln(c, [[x1, yy], [x2, yy]], Math.abs(v) < 1e-9 ? 2.4 : 1.2, Math.abs(v) < 1e-9 ? "#333" : "#d5d5d5");
+      tx(c, pf(Math.round(v * 100) / 100, dec), x1 - 14, yy, { size: 25, align: "right" });
+    }
+    ln(c, [[x1, y1], [x1, y2]], 2.4, "#333");
+    tx(c, label, x1 - 98, (y1 + y2) / 2, { size: 27, rot: -Math.PI / 2 });
+    return Y;
+  }
+  function drawDyn(cv, LK, d, r) {
+    var M = r.M, R = M.R.filter(function (o) { return isFinite(o.p60.m) || isFinite(o.p15.m); });
+    var dry = M.dry && R.some(function (o) { return isFinite(o.pd.m); });
+    var W = 1600, H = 900, c = cvSet(cv, W, H); cv._cm = 16;
+    var x1 = 170, x2 = W - 360, y1 = 70, y2 = H - 150;
+    var vals = [0]; R.forEach(function (o) { vals.push(o.p15.m, o.p60.m); if (dry) vals.push(o.pd.m); });
+    vals = fin(vals); var hi = Math.max.apply(null, vals), lo = Math.min.apply(null, vals);
+    var Y = axesY(c, x1, x2, y1, y2, Math.min(0, lo), hi * 1.08 || 1, "Увеличение массы Δm, %", 6);
+    var span = dry ? (x2 - x1) * 0.74 : x2 - x1 - 20, X = function (t) { return x1 + t / 60 * span; }, xd = x2 - 40;
+    [0, 15, 30, 45, 60].forEach(function (t) { ln(c, [[X(t), y2], [X(t), y2 + 10]], 2, "#333"); tx(c, String(t), X(t), y2 + 34, { size: 25 }); });
+    ln(c, [[x1, y2], [dry ? X(60) + 30 : x2, y2]], 2.4, "#333");
+    tx(c, "Время пропитки t, мин", X(30), y2 + 80, { size: 27 });
+    if (dry) {
+      ln(c, [[xd - 70, y2], [x2, y2]], 2.4, "#333"); ln(c, [[X(60) + 36, y2 + 12], [X(60) + 50, y2 - 12]], 2, "#333"); ln(c, [[X(60) + 50, y2 + 12], [X(60) + 64, y2 - 12]], 2, "#333");
+      tx(c, "после", xd, y2 + 34, { size: 24 }); tx(c, "высушивания" + (isFinite(M.tD) ? " (" + fv(M.tD) + " ч)" : ""), xd, y2 + 66, { size: 24 });
+    }
+    R.forEach(function (o, i) {
+      var col = SER[i % SER.length], pts = [[X(0), Y(0)]];
+      if (isFinite(o.p15.m)) pts.push([X(15), Y(o.p15.m)]);
+      if (isFinite(o.p60.m)) pts.push([X(60), Y(o.p60.m)]);
+      ln(c, pts, 4.5, col);
+      if (dry && isFinite(o.pd.m) && isFinite(o.p60.m)) ln(c, [[X(60), Y(o.p60.m)], [xd, Y(o.pd.m)]], 3, col, [14, 10]);
+      pts.forEach(function (p, j) { if (j) marker(c, i, p[0], p[1], col); });
+      if (dry && isFinite(o.pd.m)) marker(c, i, xd, Y(o.pd.m), col);
+    });
+    /* легенда справа: подписи без наложения */
+    var lx = x2 + 40, ly = y1 + 20;
+    tx(c, "Образцы:", lx, ly, { size: 26, bold: true, align: "left" });
+    R.forEach(function (o, i) {
+      var yy = ly + 50 + i * 46, col = SER[i % SER.length];
+      ln(c, [[lx, yy], [lx + 56, yy]], 4.5, col); marker(c, i, lx + 28, yy, col);
+      tx(c, o.n + (isFinite(o.p60.m) ? " — " + pf(o.p60.m, 0) + " %" : ""), lx + 70, yy, { size: 25, align: "left" });
+    });
+    tx(c, "Δm — к исходному весу (табл. 1)", lx, ly + 70 + R.length * 46, { size: 22, align: "left", color: "#555" });
+  }
+  function drawDims(cv, LK, d, r) {
+    var M = r.M, R = M.R.filter(function (o) { return ["L", "A", "B", "TA", "TB"].some(function (k) { return isFinite(o.p60[k]); }); });
+    var W = 1600, H = 900, c = cvSet(cv, W, H); cv._cm = 16;
+    var x1 = 170, x2 = W - 40, y1 = 120, y2 = H - 150;
+    var S = R.map(function (o) { return [o.p60.L, mean([o.p60.A, o.p60.B]), mean([o.p60.TA, o.p60.TB])]; });
+    var vals = fin([0].concat.apply([0], S)), hi = Math.max.apply(null, vals), lo = Math.min.apply(null, vals);
+    var Y = axesY(c, x1, x2, y1, y2, Math.min(0, lo * 1.15), Math.max(hi * 1.12, 0.5), "Изменение размера через 1 ч, %", 6);
+    var COL = ["#9aa5b1", "#3e7cb1", "#d98c2b"], NM = ["длина l (вдоль волокон)", "ширина b (ср. А и В)", "толщина h (ср. А и В)"];
+    var gw = (x2 - x1) / Math.max(1, R.length), bw = Math.min(70, gw * 0.24);
+    R.forEach(function (o, i) {
+      var cx = x1 + gw * (i + 0.5);
+      S[i].forEach(function (v, j) {
+        var x = cx + (j - 1) * (bw + 8) - bw / 2;
+        if (!isFinite(v)) { tx(c, "–", x + bw / 2, Y(0) - 18, { size: 24 }); return; }
+        var ya = Y(Math.max(0, v)), yb = Y(Math.min(0, v));
+        c.fillStyle = COL[j]; c.fillRect(x, ya, bw, Math.max(2, yb - ya)); c.lineWidth = 1.5; c.strokeStyle = "#333"; c.strokeRect(x, ya, bw, Math.max(2, yb - ya));
+        tx(c, pf(v, 1), x + bw / 2, v >= 0 ? ya - 18 : yb + 20, { size: 22 });
+      });
+      tx(c, o.n, cx, y2 + 40, { size: 26, bold: true });
+    });
+    var lx = x1 + 10;
+    NM.forEach(function (n, j) { var xx = lx + j * 470; c.fillStyle = COL[j]; c.fillRect(xx, 40, 34, 26); c.strokeStyle = "#333"; c.lineWidth = 1.5; c.strokeRect(xx, 40, 34, 26); tx(c, n, xx + 46, 53, { size: 25, align: "left" }); });
+  }
+
+  /* ---------- редактор замеров ---------- */
+  var CSS = ".fld[data-custom]{grid-column:1/-1 !important}.wd{display:grid;gap:10px}.wd-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}" +
+    ".wd-bar button{border:1px solid var(--line);background:var(--surface);color:var(--ink);font:500 13px var(--sans);padding:6px 10px;border-radius:7px;cursor:pointer}.wd-bar button.warn{border-color:var(--bad);color:var(--bad)}" +
+    ".wd h3{margin:6px 0 0;font:600 15px var(--cond)}.wd-tw{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}" +
+    ".wd-t{width:100%;border-collapse:collapse;font:13px var(--sans)}.wd-t.w7{min-width:760px}.wd-t.w4{min-width:420px}" +
+    ".wd-t th{font:600 12px var(--cond);color:var(--muted);text-align:left;padding:6px 4px;background:var(--sunk);white-space:nowrap}.wd-t td{padding:3px 3px;border-top:1px solid var(--line)}" +
+    ".wd-t input,.wd-t select{width:100%;box-sizing:border-box;font:13px var(--mono);padding:5px 5px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink);min-width:0}" +
+    ".wd-t select{font-family:var(--sans)}.wd-t td.nm{font:600 13px var(--sans);white-space:nowrap;padding-left:8px}.wd-del{border:0;background:none;color:var(--bad);font-size:19px;cursor:pointer;padding:0 6px}" +
+    ".wd-note{font-size:12.5px;color:var(--muted);margin:0}" +
+    ".wd-t td:first-child{position:sticky;left:0;z-index:1;background:var(--surface)}.wd-t th:first-child{position:sticky;left:0;z-index:2;background:var(--sunk)}.wd-t.w7 td:first-child,.wd-t.w7 th:first-child{min-width:96px}";
+  function css() { if (!document.getElementById("wd-css")) { var s = document.createElement("style"); s.id = "wd-css"; s.textContent = CSS; document.head.appendChild(s); } }
+  function editor(box, data, changed) {
+    css();
+    var armed = null;
+    function S() { if (!Array.isArray(data.samples)) data.samples = []; return data.samples; }
+    function cellIn(i, st, k) { var s = S()[i], v = s[st] && s[st][k] !== undefined ? s[st][k] : ""; return '<td><input data-i="' + i + '" data-st="' + st + '" data-wk="' + k + '" inputmode="decimal" value="' + esc(v) + '" aria-label="' + esc(HEAD[k]) + '"></td>'; }
+    function tbl(st) {
+      var keys = st === "s15" ? D15 : DIMS, first = st === "s0";
+      var h = '<div class="wd-tw"><table class="wd-t ' + (st === "s15" ? "w4" : "w7") + '"><thead><tr><th style="width:' + (first ? "17%" : "22%") + '">Образец</th>' + (first ? '<th style="width:15%">Упаковка</th>' : "") +
+        keys.map(function (k) { return "<th>" + HEAD[k] + (k === "m" ? ", г" : ", мм") + "</th>"; }).join("") + (first ? "<th></th>" : "") + "</tr></thead><tbody>";
+      S().forEach(function (s, i) {
+        h += "<tr>" + (first ? '<td><input data-n="' + i + '" value="' + esc(s.n) + '" aria-label="Образец"></td><td><select data-pk="' + i + '">' +
+          PK.map(function (p) { return '<option value="' + p[0] + '"' + ((s.pk || "") === p[0] ? " selected" : "") + ">" + p[1] + "</option>"; }).join("") + "</select></td>"
+          : '<td class="nm" data-nm="' + i + '">' + esc(s.n) + "</td>") +
+          keys.map(function (k) { return cellIn(i, st, k); }).join("") + (first ? '<td><button type="button" class="wd-del" title="Удалить образец" data-del="' + i + '">×</button></td>' : "") + "</tr>";
+      });
+      if (!S().length) h += '<tr><td colspan="' + (keys.length + (first ? 3 : 1)) + '" class="nm">Образцов нет — нажмите «+ образец» или «Пример из методички».</td></tr>';
+      return h + "</tbody></table></div>";
+    }
+    function draw() {
+      var h = '<div class="wd"><div class="wd-bar"><button type="button" data-a="add">+ образец</button><button type="button" data-a="ex">Пример из методички</button><button type="button" data-a="clr">Очистить замеры</button></div>' +
+        "<h3>Таблица 1 — исходные параметры</h3>" + tbl("s0") +
+        "<h3>Таблица 2 — через 15 минут после погружения в воду</h3>" + tbl("s15") +
+        "<h3>Таблица 4 — через 1 час после погружения в воду</h3>" + tbl("s60") +
+        (data.dry === "1" ? "<h3>После высушивания при комнатной температуре</h3>" + tbl("sd") : "") +
+        '<p class="wd-note">Размеры — в миллиметрах, вес — в граммах. Не измеряли — оставьте клетку пустой (в отчёте будет «–»). Через 15 минут по методичке измеряют только ширину на концах А и В и вес.</p></div>';
+      box.innerHTML = h; bind();
+    }
+    function bind() {
+      box.querySelectorAll("input[data-wk]").forEach(function (inp) { inp.addEventListener("input", function () {
+        var s = S()[+inp.dataset.i]; if (!s) return; var st = inp.dataset.st; if (!s[st]) s[st] = {}; s[st][inp.dataset.wk] = inp.value.trim(); changed();
+      }); });
+      box.querySelectorAll("input[data-n]").forEach(function (inp) { inp.addEventListener("input", function () {
+        var i = +inp.dataset.n, s = S()[i]; if (!s) return; s.n = inp.value;
+        box.querySelectorAll('[data-nm="' + i + '"]').forEach(function (td) { td.textContent = inp.value; }); changed();
+      }); });
+      box.querySelectorAll("select[data-pk]").forEach(function (sel) { sel.addEventListener("change", function () { var s = S()[+sel.dataset.pk]; if (s) { s.pk = sel.value; changed(); } }); });
+      box.querySelectorAll("[data-del]").forEach(function (b) { b.addEventListener("click", function () { S().splice(+b.dataset.del, 1); changed(); draw(); }); });
+      box.querySelectorAll("[data-a]").forEach(function (b) { b.addEventListener("click", function () {
+        var a = b.dataset.a;
+        if (a === "add") { S().push(blank(S().length + 1)); changed(); draw(); return; }
+        if (a === "ex") { data.samples = example(); changed(); draw(); return; }
+        if (a === "clr") {
+          if (armed !== b) { armed = b; b.textContent = "Точно очистить все замеры?"; b.classList.add("warn"); setTimeout(function () { if (armed === b) { armed = null; b.textContent = "Очистить замеры"; b.classList.remove("warn"); } }, 3500); return; }
+          armed = null; S().forEach(function (s) { s.s0 = rowObj(DIMS, ""); s.s15 = rowObj(D15, ""); s.s60 = rowObj(DIMS, ""); s.sd = rowObj(DIMS, ""); }); changed(); draw();
+        }
+      }); });
+    }
+    draw();
+    var lastDry = data.dry;
+    return { refresh: function (d) { var re = d !== data || d.dry !== lastDry; data = d; lastDry = d.dry; if (re) draw(); } };
+  }
+
+  /* ---------- отчёт Word ---------- */
+  function report(D, d, r, img) {
+    var M = r.M;
+    if (!M || !M.R.length) { (r.warn || []).forEach(function (w) { D.text(w); }); return; }
+    var fig = 0, figDone = {};
+    var CAPS = { sample: "Схема образца и мест измерений", dims: "Изменение размеров образцов через 1 час пропитки", dyn: "Динамика поглощения воды образцами" };
+    function putFig(id) { if (figDone[id]) return; figDone[id] = 1; fig++; img(id, { sample: 13.5, dims: 16, dyn: 16 }[id]); D.para("Рисунок " + fig + " — " + CAPS[id], { align: "center", size: 10, after: 8 }); }
+    D.head("Цель работы", { size: 13 });
+    D.text("Изучение динамики поглощения и испарения воды различных пород древесины:", { after: 2 });
+    D.numbered(["Степени и интенсивности впитывания воды путём погружения указанных образцов в ёмкость с водой комнатной температуры на 1 час.",
+      "Степени и интенсивности отдачи воды при высушивании при комнатной температуре.",
+      "Измерение объёмов и размеров указанных образцов (на двух концах бруска — А и В) в течение цикла пропитывания и высыхания влаги."]);
+    D.head("Подготовка эксперимента", { size: 13 });
+    D.text("Для изучения используются образцы брусков различных пород древесины: " + M.R.map(function (o) { return o.n + (o.pk ? " (" + PKT[o.pk] + ")" : ""); }).join(", ") + ".");
+    D.text("Приборы: весы лабораторные, штангенциркуль, линейка, видеорегистратор.");
+    D.text("Порядок опыта: у каждого образца измерены длина, ширина и толщина на двух концах бруска (А и В) и вес (табл. 1, рис. 1). Образцы погружены в ёмкость с водой комнатной температуры на 1 час. Через 15 минут после погружения измерены ширина на концах А и В и вес (табл. 2), через 1 час — все параметры (табл. 4)" +
+      (M.dry ? ". После пропитки образцы высушивались при комнатной температуре" + (isFinite(M.tD) ? " в течение " + fv(M.tD) + " ч" : "") + ", после чего параметры измерены ещё раз" : "") + ".");
+    putFig("sample");
+    D.head("Результаты измерений", { size: 13 });
+    r.steps.forEach(function (s) {
+      if (s.kind === "fin") return;
+      if (s.kind === "t6") D.head("Степень и интенсивность впитывания воды", { size: 13 });
+      if (s.kind === "t7") D.head("Объём образцов", { size: 13 });
+      if (s.kind === "t8") D.head("Высушивание", { size: 13 });
+      (s.paras || []).forEach(function (t) { D.text(t); });
+      s.lines.forEach(function (l) { if (/^Пример/.test(l)) D.text(l, { after: 2 }); else D.formula(l); });
+      (s.tables || []).forEach(function (tb) {
+        D.para(s.cap, { size: 11, after: 2, keep: true });
+        D.table(tb.headers, tb.rows, { widths: tb.widths, size: 10 });
+      });
+      if (s.figs) s.figs.forEach(function (id) { if (id !== "sample") putFig(id); });
+      if (s.concl && s.concl[1]) D.text([{ t: s.concl[0], bold: true }, s.concl[1]], { after: 8 });
+    });
+    var fin0 = r.steps.filter(function (s) { return s.kind === "fin"; })[0];
+    D.head("Вывод", { size: 13 });
+    (fin0 ? fin0.paras : []).forEach(function (t) { D.text(t); });
+  }
+
+  App.taskWork({
+    disc: "tomg", sec: "kon", tkey: "tomg-kon", discName: "Технология и организация морской перевозки грузов", id: "tomg-k1", order: 1, key: "tomg-k1",
+    file: "ТМПГ_Конаков_ЛР1_Древесина", no: "ЛР 1", short: "ЛР №1",
+    eyebrow: "ТОМПГ · Конаков · Лабораторная работа №1", title: "Исследования свойств древесины различных пород",
+    titleTopic: "Исследования свойств древесины различных пород", titleKind: "Лабораторная работа",
+    desc: "Пропитка брусков дерева в воде: исходные параметры, через 15 минут и через 1 час (табл. 1–5 методички), изменения в процентах, первый и второй выводы, общий вывод; по желанию — интенсивность впитывания, объёмы, высушивание.",
+    variants: 1, summary: false,
+    variantData: function () { return { variant: "1", samples: example(), extra: "1", dry: "0", dryT: "24", c1: "", c2: "", c3: "" }; },
+    hint: "Методичка «Технология перевозки грузов морем», лабораторные работы, ч. I (2016), ЛР № 1, с. 6–8. По умолчанию — замеры из примера методички; впишите свои замеры, и таблицы 1–5, проценты и выводы пересчитаются.",
+    sections: [
+      { title: "Образцы и замеры", note: "Пример — табл. 1, 2 и 4 методички. «Сосна р1» и «Ель р1» из табл. 2–5 — это «Сосна» и «Ель» табл. 1; образцы «Сосна р2» и «Ель р2» не включены: их исходных параметров в табл. 1 методички нет. Какие образцы были в плёнке, в примере не сказано — отметьте упаковку своих образцов, тогда выводы сформулируются по ней, как в методичке («упакованные (неупакованные) в плёнку образцы изменили (не изменили) свои размеры…»).",
+        fields: [["_wood", "", { custom: editor }]] },
+      { title: "Состав отчёта", fields: [
+        ["extra", "Интенсивность впитывания и объёмы (п. 1 и 3 цели)", { select: [["1", "да"], ["0", "нет — только табл. 1–5, как в примере"]], wide: true }],
+        ["dry", "Высушивание (п. 2 цели)", { select: [["0", "не проводилось (как в примере методички)"], ["1", "проводилось — ввести замеры"]], wide: true }],
+        ["dryT", "Время высушивания", { num: true, unit: "ч" }]] },
+      { title: "Выводы (необязательно)", note: "Пусто — выводы формулируются автоматически по замерам. Свой текст заменит автоматический (в общем выводе каждый абзац — с новой строки).", fields: [
+        ["c1", "Первый вывод (15 минут)", { area: true, rows: 3 }], ["c2", "Второй вывод (1 час)", { area: true, rows: 3 }], ["c3", "Общий вывод", { area: true, rows: 4 }]] }
+    ],
+    figs: {
+      sample: { caption: "Схема образца и мест измерений", draw: drawSample },
+      dims: { caption: "Изменение размеров образцов через 1 час пропитки", draw: drawDims },
+      dyn: { caption: "Динамика поглощения воды образцами", draw: drawDyn }
+    },
+    solve: solve, report: report
   });
 })();
 
