@@ -11186,8 +11186,8 @@ var TUS = (function () {
   function two(cvs, list, title, marks, lim, ref, H0) {
     var W = 1400, H = H0 || 900, g = cv(cvs, W, H), X = Math.min(90, Math.ceil((lim || 90) / 10) * 10), mn = 0, mx = 0;
     list.forEach(function (o) { for (var a = 0; a <= X; a += 1) { var v = o.l(a); mn = Math.min(mn, v); mx = Math.max(mx, v); } });
-    var M = Math.max(Math.abs(mn), mx); if (ref) M = Math.min(M, Math.max(ref * 1.3, 0.06));
-    var st = M > 1.2 ? 0.2 : M > 0.6 ? 0.1 : M > 0.25 ? 0.05 : 0.02, Y = Math.ceil(M * 1.12 / st) * st;
+    var M = ref ? Math.max(ref, 0.04) : Math.max(Math.abs(mn), mx, 0.04);   /* ref — полуразмах оси l, при котором видны все характерные точки (lmax, θv, A, S1, S2); хвосты за углом заката могут выходить за рамку */
+    var st = M > 2.4 ? 0.5 : M > 1.2 ? 0.2 : M > 0.6 ? 0.1 : M > 0.25 ? 0.05 : 0.02, Y = Math.ceil(M * 1.06 / st) * st;
     var bx = [90, 86, 1220, 690];
     g.fillStyle = "#fbfbfd"; g.fillRect(bx[0], bx[1], bx[2], bx[3]);
     var A = axes(g, bx, [-X, X, 10, 0], [-Y, Y, st, st < 0.05 ? 2 : st < 0.1 ? 2 : 1], ["θ, °", "l, м"]);
@@ -11225,8 +11225,8 @@ var TUS = (function () {
     var lim = Math.min(90, (P.thV === null ? 90 : P.thV) + 15);
     var lk = -c.lkr, hasA = P.A && dy, a1, aD, s2on = false;
     if (hasA) { a1 = dy.aS1 === null ? -90 : dy.aS1; aD = dy.thD === null ? (dy.aS2 === null ? a1 : dy.aS2) : dy.thD; s2on = dy.aS1 !== null && aD < a1 - 0.2 && (dy.thD !== null || dy.S2max >= 5e-5); }
-    var ta = P.thA > 0 ? P.thA : 20, r0 = Math.max(Math.min(hasA ? Math.min(aD, -ta) : -ta, -ta) - 1, -(P.thV === null ? 90 : P.thV) - 5), ref = Math.max(c.lkr || 0, 0.03);
-    for (var q = r0; q <= ta + 4; q += 0.5) ref = Math.max(ref, Math.abs(l(q)));
+    var te = Math.min(90, (P.thV === null ? 40 : P.thV) + 3), ref = Math.max(c.lkr || 0, P.max.l > 0 ? P.max.l : 0, 0.03);
+    for (var q = -te; q <= te; q += 0.5) ref = Math.max(ref, Math.abs(l(q)));
     two(cvs, [{ l: l, c: "#222", w: 3.2, hi: P.thA > 0 ? P.thA : 0, hc: Bl }], "ДСО аварийного судна (DWа = " + f(c.DW, 0) + " т, hа = " + f(c.h, 2) + " м)" + (hasA ? ":  Aкр = Aв ?" : ""), {
       under: function (g, A) {
         if (!hasA) return;
@@ -11272,7 +11272,8 @@ var TUS = (function () {
   function drawV(cvs, c) {
     var yOn = c.lMy > 1e-4, Ca = "#1b3f8f", Cv = "#0e9f6e", Rd = "#c0392b";
     var cl = [{ l: c.l, c: Ca, dash: [10, 7], w: 3 }, { l: c.Sv.l, c: Cv, w: 4 }];
-    var ref = Math.max(c.P.max.l, c.Pv.max.l, yOn ? c.lMy : 0, 0.05);
+    var te = Math.min(90, Math.max(c.P.thV === null ? 40 : c.P.thV, c.Pv.thV === null ? 40 : c.Pv.thV) + 3), ref = Math.max(c.P.max.l, c.Pv.max.l, yOn ? c.lMy : 0, 0.05);
+    for (var q = -te; q <= te; q += 0.5) ref = Math.max(ref, Math.abs(c.l(q)), Math.abs(c.Sv.l(q)));
     two(cvs, cl, "ДСО до и после восстановления остойчивости", { over: function (g, A, Z) {
       var y0 = A.py(0);
       [[c.P, Ca, "а"], [c.Pv, Cv, "в"]].forEach(function (q, k) {
