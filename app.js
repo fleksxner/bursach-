@@ -4927,6 +4927,364 @@ var LR1Engine = (function () {
     },
     solve: solve2, report: report2
   });
+
+  /* ======================================================================
+     ЛР № 3 «Предварительный расчёт грузового плана судна» (методичка 2016, с. 9–16).
+     Рейс — вариант из таблицы заданий (TMPRef.VOYAGES, 26 вариантов), расстояния — таблица
+     расстояний методички, а если прямой ячейки нет — по частям через проливы (TMPRef.route).
+     Судно т/х «Валерий Волков» — табл. 1.1–1.3. Запасы: T = L/V, tст (7 сут или по формуле
+     с Мп, Мв, tвсп), Pт = qт·tх·Kшт + qт.ст·tст, Pв = qв·tх·Kшт + qв·tст, Pсм = 0,06·Pт,
+     Pпр = 40/80 т, Pзап = (Pт + Pв + Pсм + Pпр)·Kшт. Совместимость — 7-балльная система
+     (баллы пар — как в ЛР Доброквашина, их можно поправить). Погрузка — все 5 грузов,
+     трюмы заполняются по объёму (P = V/μ) с ограничением по местной прочности, или заданные массы.
+     ====================================================================== */
+  var HOLDS3 = [
+    { no: 1, fr: "176–214", vb: 1363, vp: 1251, z: 6.10, x: 31.04, L: 14, B: 12, H: 7, q: 10.0, P: 2188, hc: 2.0, dk: 2.0, f0: 176, f1: 214 },
+    { no: 2, fr: "136–176", vb: 1911, vp: 1752, z: 5.00, x: 16.25, L: 14, B: 14, H: 7, q: 14.6, P: 3036, hc: 2.0, dk: 2.0, f0: 136, f1: 176 },
+    { no: 3, fr: "94–136", vb: 1936, vp: 1775, z: 4.77, x: -0.27, L: 14, B: 14, H: 7, q: 16.9, P: 4258, hc: 2.0, dk: 2.0, f0: 94, f1: 136 },
+    { no: 4, fr: "9–50", vb: 1398, vp: 1282, z: 7.59, x: -33.99, L: 14, B: 12, H: 7, q: 10.3, P: 1182, hc: 1.6, dk: 2.0, f0: 9, f1: 50 }
+  ];
+  var ADJ3 = { "1-2": 1, "2-1": 1, "2-3": 1, "3-2": 1 };   /* трюмы 3 и 4 разделены машинным отделением (шп. 50–94) */
+  var CARGO3 = [["Сено прессованное", "2,9", "2", "100", "2"], ["Цемент в мешках", "0,6", "4", "100", "1"], ["Сахар", "0,92", "1", "50", "1"], ["Копчёная рыба в бочках", "3,76", "3", "100", "2"], ["Мука", "0,94", "1", "50", "1"]];
+  var PAIR3 = {
+    "Сено прессованное|Цемент в мешках": ["6", "пылящий груз и влаговыделяющий — в одном помещении с сепарацией"],
+    "Сахар|Сено прессованное": ["3", "сахар гигроскопичен, сено выделяет влагу — только в соседнем отсеке"],
+    "Копчёная рыба в бочках|Сено прессованное": ["7", "взаимно нейтральны — совместно без ограничений"],
+    "Мука|Сено прессованное": ["3", "мука гигроскопична, сено выделяет влагу — только в соседнем отсеке"],
+    "Сахар|Цемент в мешках": ["3", "пылящий груз и груз, портящийся от пыли, — только в соседнем отсеке"],
+    "Копчёная рыба в бочках|Цемент в мешках": ["6", "взаимно не агрессивны — в одном помещении с сепарацией"],
+    "Мука|Цемент в мешках": ["3", "пылящий груз и груз, портящийся от пыли, — только в соседнем отсеке"],
+    "Копчёная рыба в бочках|Сахар": ["2", "рыба выделяет запах, сахар воспринимает запахи — через отсек"],
+    "Мука|Сахар": ["6", "оба пищевые, взаимно не агрессивны — в одном помещении с сепарацией"],
+    "Копчёная рыба в бочках|Мука": ["2", "рыба выделяет запах, мука воспринимает запахи — через отсек"]
+  };
+  var IDX3 = { 1: "совместная перевозка на одном судне запрещается", 2: "«через отсек от…» — разделение двумя стальными водонепроницаемыми переборками", 3: "«в соседнем отсеке от…» — разделение вертикальной стальной водонепроницаемой переборкой",
+    4: "«в одном отсеке, но в разных помещениях от…» — разделение двумя стальными палубами или переборками", 5: "«в одном помещении при условии разделения грузом, нейтральным по отношению к двум перевозимым»", 6: "«в одном помещении, но с сепарацией»", 7: "совместное размещение допускается без ограничений" };
+  function pk3(a, b) { a = String(a).trim(); b = String(b).trim(); return a < b ? a + "|" + b : b + "|" + a; }
+  function cargo3() { return CARGO3.map(function (c) { return { n: c[0], mu: c[1], h: c[2], sh: c[3], q: "", port: c[4] }; }); }
+  function data3(v) {
+    return { variant: String(v || 1), L1: "", L2: "", V: "12", stay: "port7", tPort: "7", Mp: "100", Mv: "200", tAux: "5", qHfo: "10", qDo: "1,5", qOil: "0,05", qW: "10", K: "1,4", kAll: "1", sm: "pct", pr: "40",
+      mode: "fill", vol: "vp", cargo: cargo3(), pairs: {} };
+  }
+  function n3(x, d) { var v = num(x); return isFinite(v) ? v : d; }
+  function fz(x, n) { return isFinite(x) ? f(x, n) : "–"; }
+  function solve3model(d) {
+    var M = { warn: [] }, ports = TMPRef.voyage(d.variant) || ["", "", ""];
+    M.ports = ports;
+    M.r1 = TMPRef.route(ports[0], ports[1]); M.r2 = TMPRef.route(ports[1], ports[2]);
+    M.L1 = isFinite(num(d.L1)) ? num(d.L1) : M.r1 ? M.r1.L : NaN; M.L2 = isFinite(num(d.L2)) ? num(d.L2) : M.r2 ? M.r2.L : NaN;
+    M.manL1 = isFinite(num(d.L1)); M.manL2 = isFinite(num(d.L2));
+    M.L = M.L1 + M.L2; M.V = n3(d.V, 12); M.Traw = M.L / M.V / 24; M.tx = Math.ceil(M.Traw - 1e-9);
+    /* груз и трюмы */
+    var C = (d.cargo || []).map(function (c, i) { return { i: i, n: String(c.n || "").trim() || "Груз " + (i + 1), mu: num(c.mu), h: parseInt(c.h, 10) || 0, sh: n3(c.sh, 100), q: num(c.q), port: c.port === "2" ? 2 : 1 }; })
+      .filter(function (c) { return c.n; });
+    M.C = C;
+    var vk = d.vol === "vb" ? "vb" : "vp";
+    M.H = HOLDS3.map(function (h) {
+      var o = { h: h, S: h.L * h.B, V: h[vk], cs: C.filter(function (c) { return c.h === h.no; }) };
+      o.Pq = h.q * o.S; o.Plim = Math.min(h.P, o.Pq);
+      if (d.mode === "given") {
+        o.cs.forEach(function (c) { c.P = isFinite(c.q) ? c.q : NaN; c.Vc = c.P * c.mu; });
+      } else {
+        var shSum = o.cs.reduce(function (s, c) { return s + (c.sh > 0 ? c.sh : 0); }, 0) || 1;
+        o.cs.forEach(function (c) { c.Vfull = o.V * (c.sh > 0 ? c.sh : 0) / shSum; c.Pfull = c.Vfull / c.mu; });
+        var Pf = o.cs.reduce(function (s, c) { return s + c.Pfull; }, 0);
+        o.Pfull = Pf; o.kLim = Pf > o.Plim ? o.Plim / Pf : 1;
+        o.cs.forEach(function (c) { c.P = c.Pfull * o.kLim; c.Vc = c.Vfull * o.kLim; });
+      }
+      o.P = o.cs.reduce(function (s, c) { return s + (isFinite(c.P) ? c.P : 0); }, 0);
+      o.Vu = o.cs.reduce(function (s, c) { return s + (isFinite(c.Vc) ? c.Vc : 0); }, 0);
+      o.qf = o.P / o.S; o.use = o.Vu / o.V * 100;
+      o.okV = o.Vu <= o.V + 0.05; o.okP = o.P <= h.P + 0.05; o.okQ = o.qf <= h.q + 1e-6;
+      return o;
+    });
+    C.forEach(function (c) { if (!(c.h >= 1 && c.h <= 4)) M.warn.push("Груз «" + c.n + "» не размещён — выберите трюм."); if (!isFinite(c.mu) || c.mu <= 0) M.warn.push("Груз «" + c.n + "»: не указан УПО μ."); if (d.mode === "given" && !isFinite(c.q)) M.warn.push("Груз «" + c.n + "»: не указана масса."); });
+    M.H.forEach(function (o) { if (!o.cs.length) M.warn.push("Трюм № " + o.h.no + " не загружен."); });
+    /* совместимость */
+    M.pairs = [];
+    for (var a = 0; a < C.length; a++) for (var b = a + 1; b < C.length; b++) {
+      var key = pk3(C[a].n, C[b].n), def = PAIR3[key], own = d.pairs && d.pairs[key];
+      var idx = parseInt(own || (def ? def[0] : "7"), 10), A = C[a], B = C[b], ok = true, why = "";
+      if (idx === 1) { ok = false; why = "совместная перевозка на одном судне запрещена"; }
+      else if (A.h && A.h === B.h) { if (idx < 6) { ok = false; why = "в одном трюме нельзя (нужно не меньше 6 баллов)"; } else why = "в одном трюме № " + A.h + (idx === 6 ? ", с сепарацией" : ""); }
+      else if (idx === 2 && ADJ3[A.h + "-" + B.h]) { ok = false; why = "трюмы № " + A.h + " и № " + B.h + " соседние, а нужно «через отсек»"; }
+      else why = "трюмы № " + A.h + " и № " + B.h + (ADJ3[A.h + "-" + B.h] ? " — соседние" : (A.h === 3 && B.h === 4) || (A.h === 4 && B.h === 3) ? " — разделены машинным отделением" : " — через отсек");
+      M.pairs.push({ a: A, b: B, key: key, idx: idx, note: own ? "" : def ? def[1] : "балл не задан — принято 7", ok: ok, why: why });
+    }
+    M.compatOk = M.pairs.every(function (p) { return p.ok; });
+    M.Q = C.reduce(function (s, c) { return s + (isFinite(c.P) ? c.P : 0); }, 0);
+    M.Vu = M.H.reduce(function (s, o) { return s + o.Vu; }, 0); M.Vt = M.H.reduce(function (s, o) { return s + o.V; }, 0);
+    M.Q1 = C.filter(function (c) { return c.port === 1; }).reduce(function (s, c) { return s + (isFinite(c.P) ? c.P : 0); }, 0); M.Q2 = M.Q - M.Q1;
+    var mz = 0, mx = 0; M.H.forEach(function (o) { mz += o.P * o.h.z; mx += o.P * o.h.x; }); M.Mz = mz; M.Mx = mx; M.Zg = M.Q ? mz / M.Q : NaN; M.Xg = M.Q ? mx / M.Q : NaN;
+    /* стоянка */
+    M.stay = d.stay;
+    if (d.stay === "calc") { M.Mp = n3(d.Mp, 100); M.Mv = n3(d.Mv, 200); M.tAuxH = n3(d.tAux, 5); M.tst = M.Q / M.Mp + M.Q / M.Mv + M.tAuxH / 24; }
+    else { M.tPort = n3(d.tPort, 7); M.tst = d.stay === "trip7" ? M.tPort : M.tPort * 3; }
+    /* запасы */
+    M.K = n3(d.K, 1.4); M.qHfo = n3(d.qHfo, 10); M.qDo = n3(d.qDo, 1.5); M.qOil = n3(d.qOil, 0.05); M.qW = n3(d.qW, 10);
+    M.Ptt = M.qHfo * M.tx * M.K; M.Pdt = M.qDo * M.tx * M.K + M.qDo * M.tst; M.Pt = M.Ptt + M.Pdt;
+    M.Pv = M.qW * M.tx * M.K + M.qW * M.tst;
+    M.Psm = d.sm === "rate" ? M.qOil * (M.tx * M.K + M.tst) : 0.06 * M.Pt;
+    M.Ppr = d.pr === "80" ? 80 : 40;
+    M.sum = M.Pt + M.Pv + M.Psm + M.Ppr; M.kAll = d.kAll !== "0"; M.Pzap = M.kAll ? M.sum * M.K : M.sum;
+    M.Ttot = M.tx + M.tst;
+    return M;
+  }
+  function solve3(d) {
+    var M = solve3model(d), st = [], warn = M.warn.slice(), tn = 0, T = function () { return ++tn; };
+    var p = M.ports.map(function (x) { return TMPRef.title(TMPRef.key(x)); });
+    /* 0. исходные данные судна */
+    var tH = { title: "Таблица " + T() + " — Данные по грузовым помещениям (табл. 1.1 методички)", headers: ["Помещение", "Район, шп.", "Объём для сыпучих, м³", "Объём для штучных, м³", "Z от ОП, м", "X от миделя, м"], widths: [2.6, 2.6, 3.0, 3.0, 2.4, 2.6],
+      rows: HOLDS3.map(function (h) { return ["Трюм № " + h.no, h.fr, String(h.vb), String(h.vp), f(h.z, 2), f(h.x, 2).replace("-", "−")]; }) };
+    var tD = { title: "Таблица " + T() + " — Размерения грузовых помещений и допустимые нагрузки (табл. 1.2, 1.3 методички)", headers: ["Величина", "Трюм 1", "Трюм 2", "Трюм 3", "Трюм 4"], widths: [6.6, 2.5, 2.5, 2.5, 2.5],
+      rows: [["Длина × ширина × высота, м"].concat(HOLDS3.map(function (h) { return f(h.L, 1) + " × " + f(h.B, 1) + " × " + f(h.H, 1); })), ["Грузовместимость, м³"].concat(HOLDS3.map(function (h) { return String(h.vb); })),
+        ["Допускаемая удельная нагрузка (второе дно) q, т/м²"].concat(HOLDS3.map(function (h) { return f(h.q, 1); })), ["Наибольший равномерно распределённый груз P, т"].concat(HOLDS3.map(function (h) { return String(h.P); })),
+        ["Крышки люков / настил верхней палубы, т/м²"].concat(HOLDS3.map(function (h) { return f(h.hc, 1) + " / " + f(h.dk, 1); }))] };
+    st.push({ no: 0, noLabel: "", title: "Исходные данные: рейс и судно", kind: "src", lines: [], paras: ["Вариант № " + d.variant + ": рейс " + p.join(" — ") + ". Судно — т/х «Валерий Волков», 4 трюма; между трюмами № 3 и № 4 — машинное отделение (шп. 50–94)."], tables: [tH, tD] });
+    /* 1. запасы */
+    function rt(r, a, b, L, man) { return man ? a + " — " + b + ": " + f(L, 0) + " миль (задано вручную)" : r ? TMPRef.routeText(r) : a + " — " + b + ": нет в таблице расстояний — впишите вручную"; }
+    if (!isFinite(M.L1) || !isFinite(M.L2)) warn.push("Нет расстояния для участка рейса — впишите его вручную (L₁ или L₂).");
+    var sea = [M.r1, M.r2].filter(function (r) { return r && r.sea; }).map(function (r) { return TMPRef.seaPath(r); });
+    var lines1 = ["L = L_{1} + L_{2} = " + fz(M.L1, 0) + " + " + fz(M.L2, 0) + " = " + fz(M.L, 0) + " миль", "T = L / V = " + fz(M.L, 0) + " / " + f(M.V, 0) + " = " + f(M.L / M.V, 1) + " ч = " + f(M.Traw, 2) + " сут → t_{х} = " + M.tx + " сут"];
+    var stl;
+    if (M.stay === "calc") stl = ["t_{ст} = ΣQ_{гр} / М_{п} + ΣQ_{гр} / М_{в} + t_{всп} = " + f(M.Q, 1) + " / " + f(M.Mp, 0) + " + " + f(M.Q, 1) + " / " + f(M.Mv, 0) + " + " + f(M.tAuxH, 0) + " / 24 = " + f(M.tst, 2) + " сут"];
+    else stl = [M.stay === "trip7" ? "t_{ст} = " + f(M.tPort, 0) + " сут (грузовые операции за рейс)" : "t_{ст} = " + f(M.tPort, 0) + " сут × 3 порта (" + p.join(", ") + ") = " + f(M.tst, 0) + " сут"];
+    var K = f(M.K, 1), tst = f(M.tst, M.stay === "calc" ? 2 : 0);
+    var lines2 = [
+      "P_{тт} = q_{тт} · t_{х} · K_{шт} = " + f(M.qHfo, 1) + " · " + M.tx + " · " + K + " = " + f(M.Ptt, 2) + " т",
+      "P_{дт} = q_{дт} · t_{х} · K_{шт} + q_{дт} · t_{ст} = " + f(M.qDo, 1) + " · " + M.tx + " · " + K + " + " + f(M.qDo, 1) + " · " + tst + " = " + f(M.Pdt, 2) + " т",
+      "P_{т} = P_{тт} + P_{дт} = " + f(M.Ptt, 2) + " + " + f(M.Pdt, 2) + " = " + f(M.Pt, 2) + " т",
+      "P_{в} = q_{в} · t_{х} · K_{шт} + q_{в} · t_{ст} = " + f(M.qW, 1) + " · " + M.tx + " · " + K + " + " + f(M.qW, 1) + " · " + tst + " = " + f(M.Pv, 2) + " т",
+      d.sm === "rate" ? "P_{см} = q_{м} · (t_{х} · K_{шт} + t_{ст}) = " + f(M.qOil, 2) + " · (" + M.tx + " · " + K + " + " + tst + ") = " + f(M.Psm, 2) + " т" : "P_{см} = 0,06 · P_{т} = 0,06 · " + f(M.Pt, 2) + " = " + f(M.Psm, 2) + " т",
+      "P_{пр} = " + M.Ppr + " т (" + (M.Ppr === 80 ? "длительный рейс" : "короткий рейс") + ")",
+      M.kAll ? "P_{зап} = (P_{т} + P_{в} + P_{см} + P_{пр}) · K_{шт} = (" + [M.Pt, M.Pv, M.Psm].map(function (x) { return f(x, 2); }).join(" + ") + " + " + M.Ppr + ") · " + K + " = " + f(M.sum, 2) + " · " + K + " = " + f(M.Pzap, 1) + " т"
+        : "P_{зап} = P_{т} + P_{в} + P_{см} + P_{пр} = " + [M.Pt, M.Pv, M.Psm].map(function (x) { return f(x, 2); }).join(" + ") + " + " + M.Ppr + " = " + f(M.Pzap, 1) + " т"];
+    st.push({ no: 1, noLabel: "1. ", title: "Расчёт количества запасов на рейс", kind: "zap",
+      paras: ["Расстояние между портами захода выбирается по таблице расстояний методички; если прямой ячейки нет, расстояние складывается по частям — через проливы и поворотные точки (как в примере методички Владивосток — пролив Лаперуза — 4-й Курильский пролив — Петропавловск-Камчатский):",
+        "L_{1}: " + rt(M.r1, p[0], p[1], M.L1, M.manL1) + ".", "L_{2}: " + rt(M.r2, p[1], p[2], M.L2, M.manL2) + "."].concat(sea.length ? ["Путь: " + sea.join("; ") + "."] : [])
+        .concat(["Средняя скорость судна V = " + f(M.V, 0) + " уз; дробная часть суток округляется в большую сторону до целых."]),
+      lines: lines1.concat(stl),
+      after: ["Расходы: тяжёлое топливо q_{тт} = " + f(M.qHfo, 1) + " т/сут (на ходу), дизельное топливо q_{дт} = " + f(M.qDo, 1) + " т/сут (на ходу и на стоянке), масло " + f(M.qOil, 2) + " т/сут, пресная вода q_{в} = " + f(M.qW, 1) + " т/сут; коэффициент штормового запаса K_{шт} = " + K + "."].concat(lines2),
+      tables: [{ title: "Таблица " + T() + " — Запасы на рейс", headers: ["Запасы", "На ходу (t_{х} = " + M.tx + " сут, с K_{шт}), т", "На стоянке (t_{ст} = " + tst + " сут), т", "Итого, т"], widths: [5.0, 4.2, 4.0, 3.3],
+        rows: [["Тяжёлое топливо", f(M.Ptt, 2), "—", f(M.Ptt, 2)], ["Дизельное топливо", f(M.qDo * M.tx * M.K, 2), f(M.qDo * M.tst, 2), f(M.Pdt, 2)], ["Пресная вода", f(M.qW * M.tx * M.K, 2), f(M.qW * M.tst, 2), f(M.Pv, 2)],
+          ["Смазочные материалы", "", "", f(M.Psm, 2)], ["Прочие запасы", "", "", String(M.Ppr)], ["Сумма", "", "", f(M.sum, 2)]].concat(M.kAll ? [["Всего с K_{шт} = " + K, "", "", f(M.Pzap, 1)]] : []).map(function (r, i, a) { if (i === a.length - 1) r.bold = true; return r; }) }],
+      answer: "P_{зап} = " + f(M.Pzap, 1) + " т (t_{х} = " + M.tx + " сут, t_{ст} = " + tst + " сут)" });
+    /* 2. совместимость */
+    var nm = M.C.map(function (c) { return c.n; });
+    var mat = M.C.map(function (c, i) { return [c.n].concat(M.C.map(function (c2, j) { if (i === j) return "—"; var pr = M.pairs.filter(function (q2) { return (q2.a === c && q2.b === c2) || (q2.a === c2 && q2.b === c); })[0]; return pr ? String(pr.idx) : ""; })); });
+    st.push({ no: 2, noLabel: "2. ", title: "Классификация грузов по условиям совместимости", kind: "compat",
+      paras: ["Для определения возможности совместной перевозки введена классификация по совместимости грузов («ТМП», 3-е изд., с. 8–9). В таблице совместимости приведены восемь основных групп грузов, обладающих агрессивными свойствами (влаговыделяющие, тепловыделяющие, самовозгорающиеся, газовыделяющие, ядовитые, пылящие, выделяющие запахи, опасные как носители карантинных объектов), и семь групп грузов, подверженных воздействию агрессивных факторов (портящиеся под воздействием влаги, тепла, легковоспламеняющиеся, подверженные действию ядовитых веществ, портящиеся от пыли, воспринимающие запахи, подверженные действию карантинных объектов). Цифры в графах таблицы обозначают:"]
+        .concat([1, 2, 3, 4, 5, 6, 7].map(function (k) { return k + " — " + IDX3[k] + ";"; })),
+      lines: [],
+      tables: [{ title: "Таблица " + T() + " — Условия совместимости заданных грузов (баллы 7-балльной системы)", headers: ["Груз"].concat(nm.map(function (n, i) { return String(i + 1) + ". " + n; })), widths: [3.6].concat(nm.map(function () { return 12.9 / Math.max(1, nm.length); })),
+        rows: mat.map(function (r, i) { r[0] = (i + 1) + ". " + r[0]; return r; }) },
+        { title: "Таблица " + T() + " — Пары грузов: условия размещения", headers: ["Пара грузов", "Балл", "Условие", "Обоснование"], widths: [4.6, 1.2, 5.0, 5.7],
+          rows: M.pairs.map(function (q2) { return [q2.a.n + " — " + q2.b.n, String(q2.idx), IDX3[q2.idx] ? IDX3[q2.idx].replace(/ — .*$/, "") : "", q2.note]; }) }],
+      answer: "" });
+    /* 3. погрузка */
+    var fill = d.mode !== "given", vkTxt = d.vol === "vb" ? "для сыпучих грузов" : "для штучных грузов";
+    var rowsH = [];
+    M.H.forEach(function (o) {
+      if (!o.cs.length) { rowsH.push(["№ " + o.h.no, "—", "", "", "", ""]); return; }
+      o.cs.forEach(function (c, k) { rowsH.push([k ? "" : "№ " + o.h.no, c.n, f(c.mu, 2), fz(c.Vc, 1), fz(c.P, 1), c.port === 1 ? p[1] : p[2]]); });
+      if (o.cs.length > 1) { var rr = ["", "итого в трюме", "", f(o.Vu, 1), f(o.P, 1), ""]; rowsH.push(rr); }
+    });
+    rowsH.push(Object.assign(["Σ", "Всего", "", f(M.Vu, 1), f(M.Q, 1), ""], { bold: true }));
+    var chk = M.H.map(function (o) { return ["№ " + o.h.no, f(o.Vu, 1) + " / " + o.V, f(o.use, 1), f(o.P, 1) + " / " + o.h.P, f(o.qf, 2) + " / " + f(o.h.q, 1), o.okV && o.okP && o.okQ ? "выполнено" : "НЕ выполнено"]; });
+    var lines3 = [];
+    if (fill) {
+      lines3.push("P_{гр} = V / μ,  P_{доп} = min(P_{наиб}; q · S),  S = l · b");
+      var ex = M.H.filter(function (o) { return o.cs.length === 1; })[0];
+      if (ex) { var c0 = ex.cs[0]; lines3.push("Пример — трюм № " + ex.h.no + ", " + c0.n.toLowerCase() + ": P = " + ex.V + " / " + f(c0.mu, 2) + " = " + f(c0.Pfull, 1) + " т;  P_{доп} = min(" + ex.h.P + "; " + f(ex.h.q, 1) + " · " + f(ex.h.L, 0) + " · " + f(ex.h.B, 0) + " = " + f(ex.Pq, 0) + ") = " + f(ex.Plim, 0) + " т"); }
+      M.H.filter(function (o) { return o.kLim < 1; }).forEach(function (o) { lines3.push("Трюм № " + o.h.no + ": по объёму поместилось бы " + f(o.Pfull, 1) + " т > P_{доп} = " + f(o.Plim, 0) + " т — масса ограничена местной прочностью: P = " + f(o.P, 1) + " т, V = " + f(o.Vu, 1) + " м³ (" + f(o.use, 1) + " % объёма)"); });
+    } else lines3.push("V_{гр} = P · μ — объём, который займёт заданная масса груза");
+    var bad = M.H.filter(function (o) { return !(o.okV && o.okP && o.okQ); });
+    var cBad = M.pairs.filter(function (q2) { return !q2.ok; });
+    if (bad.length) warn.push("Не выполнены проверки вместимости или местной прочности: трюм " + bad.map(function (o) { return "№ " + o.h.no; }).join(", ") + ".");
+    if (cBad.length) warn.push("Нарушены условия совместимости: " + cBad.map(function (q2) { return q2.a.n + " — " + q2.b.n + " (" + q2.why + ")"; }).join("; ") + ".");
+    st.push({ no: 3, noLabel: "3. ", title: "Погрузка судна", kind: "load",
+      paras: [fill ? "Все пять грузов — в таре и упаковке (кипы, мешки, бочки), поэтому используется объём трюмов " + vkTxt + " (табл. 1.1). Каждый трюм заполняется по объёму; масса груза P = V / μ. Если два груза размещены в одном трюме, объём делится между ними по заданным долям. Масса груза в трюме не должна превышать допустимую по местной прочности второго дна (табл. 1.2, 1.3)."
+        : "Массы грузов заданы; объём каждого груза V = P · μ сравнивается с объёмом трюма " + vkTxt + " (табл. 1.1), масса — с допустимой по местной прочности (табл. 1.2, 1.3).",
+        "Грузы распределены по трюмам с учётом условий совместимости (табл. " + (tn - 1) + ", " + tn + "): " + M.pairs.filter(function (q2) { return q2.idx <= 3 || q2.a.h === q2.b.h; }).map(function (q2) { return q2.a.n.toLowerCase() + " и " + q2.b.n.toLowerCase() + " — " + q2.why; }).join("; ") + "."],
+      lines: lines3,
+      tables: [{ title: "Таблица " + T() + " — Распределение груза по трюмам", headers: ["Трюм", "Груз", "μ, м³/т", "V, м³", "P, т", "Порт выгрузки"], widths: [1.6, 4.6, 1.8, 2.2, 2.2, 4.1], rows: rowsH },
+        { title: "Таблица " + T() + " — Проверка вместимости и местной прочности", headers: ["Трюм", "V груза / V трюма, м³", "Заполнение, %", "P / P_{наиб}, т", "q = P / S / q_{доп}, т/м²", "Условия"], widths: [1.6, 3.6, 2.4, 3.2, 3.3, 2.4], rows: chk },
+        { title: "Таблица " + T() + " — Моменты груза относительно ОП и миделя", headers: ["Трюм", "P, т", "Z, м", "P·Z, т·м", "X, м", "P·X, т·м"], widths: [2.0, 2.6, 2.2, 3.2, 2.2, 3.3],
+          rows: M.H.map(function (o) { return ["№ " + o.h.no, f(o.P, 1), f(o.h.z, 2), f(o.P * o.h.z, 1), f(o.h.x, 2).replace("-", "−"), f(o.P * o.h.x, 1).replace("-", "−")]; }).concat([Object.assign(["Σ", f(M.Q, 1), "", f(M.Mz, 1), "", f(M.Mx, 1).replace("-", "−")], { bold: true })]) }],
+      after: ["Аппликата и абсцисса центра тяжести груза: Z_{g} = ΣP·Z / ΣP = " + f(M.Mz, 1) + " / " + f(M.Q, 1) + " = " + f(M.Zg, 2) + " м;  X_{g} = ΣP·X / ΣP = " + f(M.Mx, 1).replace("-", "−") + " / " + f(M.Q, 1) + " = " + f(M.Xg, 2).replace("-", "−") + " м (" + (M.Xg >= 0 ? "в нос" : "в корму") + " от миделя)."],
+      figs: ["plan"], answer: "груз " + f(M.Q, 1) + " т, " + f(M.Vu, 0) + " м³; Z_{g} = " + f(M.Zg, 2) + " м, X_{g} = " + f(M.Xg, 2).replace("-", "−") + " м" });
+    /* вывод */
+    var C3 = [];
+    C3.push("Для рейса " + p.join(" — ") + " (L = " + fz(M.L, 0) + " миль, ходовое время " + M.tx + " сут, стояночное " + tst + " сут) запасы судна на рейс составляют P_{зап} = " + f(M.Pzap, 1) + " т.");
+    C3.push("Все пять грузов размещены в четырёх трюмах: " + M.H.filter(function (o) { return o.cs.length; }).map(function (o) { return "трюм № " + o.h.no + " — " + o.cs.map(function (c) { return c.n.toLowerCase() + " " + f(c.P, 1) + " т"; }).join(" и "); }).join("; ") + "; всего " + f(M.Q, 1) + " т груза, " + f(M.Vu, 0) + " м³ (" + f(M.Vu / M.Vt * 100, 1) + " % объёма трюмов).");
+    C3.push(cBad.length ? "Условия совместимости нарушены: " + cBad.map(function (q2) { return q2.a.n.toLowerCase() + " — " + q2.b.n.toLowerCase(); }).join(", ") + " — размещение нужно изменить." : "Условия совместимости выполнены: грузы, требующие разделения «через отсек», разнесены по несмежным трюмам, совместно в одном трюме размещены только грузы с баллом 6–7 (с сепарацией).");
+    var lim = M.H.filter(function (o) { return o.kLim < 1; });
+    C3.push(bad.length ? "Вместимость или местная прочность превышены в трюме " + bad.map(function (o) { return "№ " + o.h.no; }).join(", ") + "." : "Вместимость трюмов и допустимые нагрузки на второе дно не превышены" + (lim.length ? "; в трюме " + lim.map(function (o) { return "№ " + o.h.no; }).join(", ") + " масса груза ограничена местной прочностью, поэтому трюм заполнен не полностью" : "") + ".");
+    C3.push("Центр тяжести груза: Z_{g} = " + f(M.Zg, 2) + " м от ОП, X_{g} = " + f(Math.abs(M.Xg), 2) + " м " + (M.Xg >= 0 ? "в нос" : "в корму") + " от миделя.");
+    st.push({ no: 99, noLabel: "", title: "Вывод", kind: "fin", lines: [], paras: C3 });
+    return { steps: st, warn: warn, M: M };
+  }
+
+  /* ---------- грузовой план (вид сбоку) ---------- */
+  function drawPlan3(cv, LK, d, r) {
+    var M = r.M, W = 1600, H = 690, c = cvSet(cv, W, H); cv._cm = 16.5;
+    var pal = (LK && LK.palette) || ["#F0E2D2", "#F6E3B4", "#CFE3B8", "#BFD9E8", "#C9CCD1", "#E8C9C9", "#D9CCE8", "#CCE8E4"];
+    var fr0 = -8, fr1 = 234, x0 = 60, x1 = W - 60, X = function (fr) { return x0 + (fr - fr0) / (fr1 - fr0) * (x1 - x0); };
+    var yDeck = 240, yTop = 268, yDB = 466, yKeel = 496, ink = "#1b1b1b";
+    var deckY = function (fr) { var t = (fr - 100) / 130; return yDeck - 26 * t * t * (fr > 100 ? 1.3 : 0.7); };
+    /* корпус */
+    c.beginPath(); c.moveTo(X(-6), deckY(-6)); c.lineTo(X(-4), yDeck + 70); c.quadraticCurveTo(X(2), yKeel, X(18), yKeel); c.lineTo(X(204), yKeel);
+    c.quadraticCurveTo(X(226), yKeel - 4, X(232), deckY(232) - 6);
+    for (var fr = 232; fr >= -6; fr -= 4) c.lineTo(X(fr), deckY(fr));
+    c.closePath(); c.fillStyle = "#f4f6f8"; c.fill(); c.lineWidth = 4; c.strokeStyle = ink; c.stroke();
+    /* надстройка над МО */
+    c.fillStyle = "#dfe3e8"; c.lineWidth = 2.5; c.strokeStyle = ink;
+    c.fillRect(X(52), yDeck - 118, X(92) - X(52), 118 - (yDeck - deckY(72))); c.strokeRect(X(52), yDeck - 118, X(92) - X(52), 118 - (yDeck - deckY(72)));
+    c.fillRect(X(58), yDeck - 160, X(68) - X(58), 42); c.strokeRect(X(58), yDeck - 160, X(68) - X(58), 42);
+    /* МО и двойное дно */
+    c.fillStyle = "#eceff2"; c.fillRect(X(50), yTop, X(94) - X(50), yDB - yTop); c.strokeRect(X(50), yTop, X(94) - X(50), yDB - yTop);
+    tx(c, "МО", (X(50) + X(94)) / 2, (yTop + yDB) / 2 - 10, { size: 26, bold: true, color: "#555" });
+    ln(c, [[X(4), yDB], [X(216), yDB]], 2, ink);
+    /* трюмы */
+    var cols = {}, ci = 0; M.C.forEach(function (cg) { cols[cg.n] = pal[ci++ % pal.length]; });
+    M.H.forEach(function (o) {
+      var a = X(o.h.f0), b = X(o.h.f1), hh = yDB - yTop, fh = hh * Math.min(1, o.V ? o.Vu / o.V : 0), xa = a;
+      o.cs.forEach(function (cg) {
+        var w = (b - a) * (o.Vu > 0 ? cg.Vc / o.Vu : 1 / o.cs.length);
+        c.fillStyle = cols[cg.n]; c.fillRect(xa, yDB - fh, w, fh);
+        if (cg.port === 2) { c.save(); c.beginPath(); c.rect(xa, yDB - fh, w, fh); c.clip(); c.strokeStyle = "rgba(0,0,0,.18)"; c.lineWidth = 2; for (var k = -400; k < 400; k += 18) { c.beginPath(); c.moveTo(xa + k, yDB); c.lineTo(xa + k + 300, yDB - 300); c.stroke(); } c.restore(); }
+        if (xa > a) ln(c, [[xa, yDB], [xa, yDB - fh]], 3, "#7a5a2b", [8, 6]);
+        var full = fh >= hh - fh, cy = full ? yDB - fh / 2 : yTop + (hh - fh) / 2, sz = w < 150 ? 19 : 22;
+        var words = cg.n.split(" "), t1 = cg.n.length > 12 && words.length > 1 ? [words.slice(0, Math.ceil(words.length / 2)).join(" "), words.slice(Math.ceil(words.length / 2)).join(" ")] : [cg.n];
+        var y0 = cy - (t1.length * 26 + 52) / 2 + 13;
+        t1.forEach(function (s, k) { tx(c, s, xa + w / 2, y0 + k * 26, { size: sz, bold: true }); });
+        tx(c, f(cg.P, 0) + " т", xa + w / 2, y0 + t1.length * 26 + 4, { size: sz });
+        tx(c, f(cg.Vc, 0) + " м³", xa + w / 2, y0 + t1.length * 26 + 30, { size: sz - 2, color: "#444" });
+        xa += w;
+      });
+      if (o.cs.length && fh < hh - 0.5) ln(c, [[a + 4, yDB - fh], [b - 4, yDB - fh]], 2.2, "#b03a2e", [10, 6]);
+      c.lineWidth = 3.5; c.strokeStyle = ink; c.strokeRect(a, yTop, b - a, hh);
+      tx(c, "Трюм № " + o.h.no, (a + b) / 2, yKeel + 34, { size: 24, bold: true });
+      tx(c, "шп. " + o.h.fr, (a + b) / 2, yKeel + 62, { size: 20, color: "#555" });
+      tx(c, f(o.use, 0) + " % объёма", (a + b) / 2, yKeel + 88, { size: 20, color: o.okV && o.okP && o.okQ ? "#2e6b3a" : "#b03a2e" });
+    });
+    tx(c, "МО, шп. 50–94", (X(50) + X(94)) / 2, yKeel + 34, { size: 20, color: "#555" });
+    tx(c, "НОС →", X(232), deckY(232) - 44, { size: 24, bold: true, align: "right" });
+    tx(c, "← КОРМА", X(-6), deckY(-6) - 44, { size: 24, bold: true, align: "left" });
+    var p = M.ports.map(function (x) { return TMPRef.title(TMPRef.key(x)); });
+    var ly = H - 34;
+    c.fillStyle = "#e8e8e8"; c.fillRect(x0, ly - 14, 40, 28); c.strokeStyle = "#333"; c.lineWidth = 1.5; c.strokeRect(x0, ly - 14, 40, 28);
+    tx(c, "груз в порт " + p[1], x0 + 52, ly, { size: 22, align: "left" });
+    var lx2 = x0 + 380; c.fillStyle = "#e8e8e8"; c.fillRect(lx2, ly - 14, 40, 28);
+    c.save(); c.beginPath(); c.rect(lx2, ly - 14, 40, 28); c.clip(); c.strokeStyle = "rgba(0,0,0,.35)"; c.lineWidth = 2; for (var k2 = -40; k2 < 60; k2 += 10) { c.beginPath(); c.moveTo(lx2 + k2, ly + 14); c.lineTo(lx2 + k2 + 28, ly - 14); c.stroke(); } c.restore(); c.strokeRect(lx2, ly - 14, 40, 28);
+    tx(c, "груз в порт " + p[2], lx2 + 52, ly, { size: 22, align: "left" });
+    var lx3 = x0 + 780; ln(c, [[lx3, ly], [lx3 + 40, ly]], 2.2, "#b03a2e", [10, 6]); tx(c, "уровень груза (трюм заполнен не полностью)", lx3 + 52, ly, { size: 22, align: "left" });
+    tx(c, "Рейс " + p.join(" — ") + ";  груз " + f(M.Q, 0) + " т;  Z_{g} = " + f(M.Zg, 2) + " м,  X_{g} = " + f(M.Xg, 2).replace("-", "−") + " м", W / 2, 36, { size: 26, bold: true });
+  }
+
+  /* ---------- редактор грузов и совместимости ---------- */
+  function editor3(box, data, changed) {
+    css();
+    function Cg() { if (!Array.isArray(data.cargo)) data.cargo = []; return data.cargo; }
+    function draw() {
+      var M = solve3model(data), given = data.mode === "given";
+      var h = '<div class="wd"><div class="wd-bar"><button type="button" data-a="add">+ груз</button><button type="button" data-a="ex">Грузы из задания методички</button></div>';
+      h += '<div class="wd-tw"><table class="wd-t" style="min-width:640px"><thead><tr><th style="width:150px">Груз</th><th style="width:82px">Трюм</th><th>μ, м³/т</th><th>Масса, т' + (given ? "" : ' <span style="font-weight:400">(расчёт)</span>') + '</th><th>Доля объёма, %</th><th>Порт выгрузки</th><th></th></tr></thead><tbody>';
+      var p = M.ports.map(function (x) { return TMPRef.title(TMPRef.key(x)); });
+      Cg().forEach(function (cg, i) {
+        var mc = M.C.filter(function (x) { return x.i === i; })[0];
+        h += '<tr><td><input data-c="n" data-i="' + i + '" value="' + esc(cg.n) + '"></td>' +
+          '<td><select data-c="h" data-i="' + i + '">' + ["", "1", "2", "3", "4"].map(function (v) { return '<option value="' + v + '"' + (String(cg.h) === v ? " selected" : "") + ">" + (v ? "№ " + v : "—") + "</option>"; }).join("") + "</select></td>" +
+          '<td><input data-c="mu" data-i="' + i + '" inputmode="decimal" value="' + esc(cg.mu) + '"></td>' +
+          "<td>" + (given ? '<input data-c="q" data-i="' + i + '" inputmode="decimal" value="' + esc(cg.q) + '">' : '<span data-mass="' + i + '">' + (mc && isFinite(mc.P) ? f(mc.P, 1) : "–") + "</span>") + "</td>" +
+          '<td><input data-c="sh" data-i="' + i + '" inputmode="decimal" value="' + esc(cg.sh) + '"></td>' +
+          '<td><select data-c="port" data-i="' + i + '"><option value="1"' + (cg.port !== "2" ? " selected" : "") + ">" + esc(p[1] || "порт 2") + '</option><option value="2"' + (cg.port === "2" ? " selected" : "") + ">" + esc(p[2] || "порт 3") + "</option></select></td>" +
+          '<td><button type="button" class="wd-del" title="Удалить груз" data-del="' + i + '">×</button></td></tr>';
+      });
+      h += "</tbody></table></div>";
+      h += '<p class="wd-note">Доля объёма важна, только если в одном трюме два груза (по умолчанию сахар и мука — по 50 %). ' + (given ? "Масса вводится вручную." : "Масса считается: трюм заполняется по объёму, P = V / μ, с ограничением по местной прочности.") + "</p>";
+      h += "<h3>Баллы совместимости пар грузов</h3>" + '<div class="wd-tw"><table class="wd-t"><thead><tr><th>Пара и размещение сейчас</th><th style="width:76px">Балл</th></tr></thead><tbody>' +
+        M.pairs.map(function (q2) { return '<tr><td class="nm" style="white-space:normal">' + esc(q2.a.n + " — " + q2.b.n) + '<br><span style="font:400 12.5px var(--sans);color:' + (q2.ok ? "var(--good)" : "var(--bad)") + '">' + esc((q2.ok ? "✓ " : "✗ ") + q2.why) + '</span></td><td><select data-pair="' + esc(q2.key) + '">' + [1, 2, 3, 4, 5, 6, 7].map(function (k) { return '<option value="' + k + '"' + (q2.idx === k ? " selected" : "") + ">" + k + "</option>"; }).join("") + "</select></td></tr>"; }).join("") + "</tbody></table></div>";
+      h += '<p class="wd-note">Баллы — по таблице совместимости (7-балльная система): 2 — «через отсек», 3 — «в соседнем отсеке», 6 — «в одном помещении с сепарацией», 7 — без ограничений. По умолчанию — те же баллы, что в ЛР Доброквашина. Трюмы № 3 и № 4 разделены машинным отделением, поэтому для них условие «через отсек» выполняется.</p></div>';
+      box.innerHTML = h; bind();
+    }
+    function upd() {
+      var M = solve3model(data);
+      box.querySelectorAll("[data-mass]").forEach(function (s) { var mc = M.C.filter(function (x) { return x.i === +s.dataset.mass; })[0]; s.textContent = mc && isFinite(mc.P) ? f(mc.P, 1) : "–"; });
+    }
+    function bind() {
+      box.querySelectorAll("[data-c]").forEach(function (inp) {
+        inp.addEventListener(inp.tagName === "SELECT" ? "change" : "input", function () {
+          var cg = Cg()[+inp.dataset.i]; if (!cg) return; cg[inp.dataset.c] = inp.value; changed();
+          if (inp.tagName === "SELECT") draw(); else upd();
+        });
+        if (inp.dataset.c === "n") inp.addEventListener("change", function () { draw(); });
+      });
+      box.querySelectorAll("[data-pair]").forEach(function (sel) { sel.addEventListener("change", function () { if (!data.pairs) data.pairs = {}; data.pairs[sel.dataset.pair] = sel.value; changed(); draw(); }); });
+      box.querySelectorAll("[data-del]").forEach(function (b) { b.addEventListener("click", function () { Cg().splice(+b.dataset.del, 1); changed(); draw(); }); });
+      box.querySelectorAll("[data-a]").forEach(function (b) { b.addEventListener("click", function () {
+        if (b.dataset.a === "add") Cg().push({ n: "Груз " + (Cg().length + 1), mu: "", h: "", sh: "100", q: "", port: "1" }); else { data.cargo = cargo3(); data.pairs = {}; }
+        changed(); draw();
+      }); });
+    }
+    draw();
+    var last = [data.mode, data.vol, data.variant].join("|");
+    return { refresh: function (d) { var k = [d.mode, d.vol, d.variant].join("|"); if (d !== data || k !== last) { data = d; last = k; draw(); } else upd(); } };
+  }
+
+  function report3(D, d, r, img) {
+    var M = r.M;
+    D.para([{ t: "Цель: ", bold: true }, "ознакомиться с составлением грузового плана с использованием таблицы совместимости."], { align: "just", indent: D.t.indent, after: 4 });
+    D.head("Задание", { size: 13 });
+    D.numbered(["Рассчитать количество запасов на предстоящий рейс при расходе: тяжёлого топлива — 10 т/сут, дизельного топлива — 1,5 т/сут, масла — 0,05 т/сут, пресной воды — 10 т/сут; " +
+      (d.stay === "calc" ? "время грузовых операций — по формуле t_{ст} = ΣQ_{гр}/М_{п} + ΣQ_{гр}/М_{в} + t_{всп} (М_{п} = " + f(M.Mp, 0) + " т/сут, М_{в} = " + f(M.Mv, 0) + " т/сут, t_{всп} = " + f(M.tAuxH, 0) + " ч)." : "время грузовых операций в порту — " + f(M.tPort, 0) + " суток."),
+      "Ознакомиться с принципом классификации грузов по условиям их совместимости («ТМП», 3-е изд., с. 8–9).",
+      "Произвести погрузку судна, используя таблицу совместимости, удельный погрузочный объём (μ) и размеры трюма, грузами (обязательно все 5 наименований): сено прессованное — 2,9 м³/т; цемент в мешках — 0,6 м³/т; сахар — 0,92 м³/т; копчёная рыба в бочках — 3,76 м³/т; мука — 0,94 м³/т. Судно имеет 4 трюма."]);
+    var fig = 0;
+    r.steps.forEach(function (s) {
+      if (s.kind === "fin") return;
+      D.head((s.noLabel || "") + s.title, { size: 13 });
+      (s.paras || []).forEach(function (t) { D.text(t); });
+      s.lines.forEach(function (l) { if (/^(Пример|Трюм №)/.test(l)) D.text(l, { after: 3 }); else D.formula(l); });
+      (s.tables || []).forEach(function (tb, k) {
+        if (s.kind === "zap" && k === 0) (s.after || []).forEach(function (t) { if (/^P_\{/.test(t)) D.formula(t); else D.text(t); });
+        D.para(tb.title, { size: 11, after: 2, keep: true });
+        D.table(tb.headers, tb.rows, { widths: tb.widths, size: tb.headers.length > 6 ? 9 : 10, lefts: s.kind === "compat" && k === 1 ? [0, 2, 3] : s.kind === "load" && k === 0 ? [1] : undefined });
+      });
+      if (s.kind !== "zap") (s.after || []).forEach(function (t) { D.text(t); });
+      (s.figs || []).forEach(function (id) { fig++; img(id, 16.5); D.para("Рисунок " + fig + " — Грузовой план судна т/х «Валерий Волков»", { align: "center", size: 10, after: 8 }); });
+    });
+    var fin0 = r.steps.filter(function (s) { return s.kind === "fin"; })[0];
+    D.head("Вывод", { size: 13 });
+    (fin0 ? fin0.paras : []).forEach(function (t) { D.text(t); });
+  }
+
+  App.taskWork({
+    disc: "tomg", sec: "kon", tkey: "tomg-kon", discName: "Технология и организация морской перевозки грузов", id: "tomg-k3", order: 3, key: "tomg-k3",
+    file: "ТМПГ_Конаков_ЛР3_Грузовой_план", no: "ЛР 3", short: "ЛР №3",
+    eyebrow: "ТОМПГ · Конаков · Лабораторная работа №3", title: "Предварительный расчёт грузового плана судна",
+    titleTopic: "Предварительный расчёт грузового плана судна", titleKind: "Лабораторная работа",
+    desc: "Т/х «Валерий Волков», 4 трюма: рейс по варианту (1–26), расстояния, запасы на рейс, совместимость пяти грузов, погрузка по объёму и местной прочности, моменты и центр тяжести груза, грузовой план.",
+    variants: (function () { var a = []; for (var v = 1; v <= 26; v++) a.push(v); return a; })(), variantLabel: "Вариант (№ в журнале)", defaultVariant: 1,
+    variantName: function (v) { var x = TMPRef.voyage(v); return v + " — " + (x ? x.join(" → ") : ""); },
+    keep: ["V", "stay", "tPort", "Mp", "Mv", "tAux", "qHfo", "qDo", "qOil", "qW", "K", "kAll", "sm", "pr", "mode", "vol", "cargo", "pairs"],
+    variantData: data3, summary: false,
+    varText: function (d) { var x = TMPRef.voyage(d.variant); return "Вариант " + d.variant + (x ? " — рейс " + x.join(" — ") : ""); },
+    hint: "Методичка «Технология перевозки грузов морем», лабораторные работы, ч. I (2016), ЛР № 3, с. 9–16. Вариант = № в журнале: рейс из таблицы заданий (три порта: погрузка и два порта выгрузки). Расстояния — по таблице расстояний методички (если прямой ячейки нет — по частям, через проливы). Судно и трюмы — табл. 1.1–1.3.",
+    sections: [
+      { title: "Рейс и время", note: "Пусто — расстояние берётся по таблице расстояний методички (или по частям через проливы). Время грузовых операций в методичке задано двумя способами: «7 суток в порту» (задание) и формулой t<sub>ст</sub> = ΣQ/М<sub>п</sub> + ΣQ/М<sub>в</sub> + t<sub>всп</sub> (порядок выполнения, п. 1.1).",
+        fields: [["L1", "L₁ — первый переход (пусто — по таблице)", { num: true, unit: "миль" }], ["L2", "L₂ — второй переход (пусто — по таблице)", { num: true, unit: "миль" }], ["V", "Скорость", { num: true, unit: "уз" }],
+          ["stay", "Время грузовых операций", { select: [["port7", "7 сут в каждом порту (3 порта)"], ["trip7", "7 сут за весь рейс"], ["calc", "по формуле (Мп, Мв, tвсп)"]], wide: true }],
+          ["tPort", "Суток в порту", { num: true, unit: "сут" }], ["Mp", "Мп — погрузка", { num: true, unit: "т/сут" }], ["Mv", "Мв — выгрузка", { num: true, unit: "т/сут" }], ["tAux", "tвсп", { num: true, unit: "ч" }]] },
+      { title: "Запасы", fields: [["qHfo", "Тяжёлое топливо", { num: true, unit: "т/сут" }], ["qDo", "Дизельное топливо", { num: true, unit: "т/сут" }], ["qOil", "Масло", { num: true, unit: "т/сут" }], ["qW", "Пресная вода", { num: true, unit: "т/сут" }],
+        ["K", "Kшт", { num: true }], ["kAll", "Kшт ко всей сумме Pзап", { select: [["1", "да — как в формуле методички"], ["0", "нет — только к расходу на ходу"]], wide: true }],
+        ["sm", "Смазочные материалы", { select: [["pct", "Pсм = 0,06·Pт (формула методички)"], ["rate", "по расходу масла 0,05 т/сут"]], wide: true }], ["pr", "Прочие запасы", { select: [["40", "40 т — короткий рейс"], ["80", "80 т — длительный рейс"]] }]] },
+      { title: "Грузы и размещение", fields: [["mode", "Масса груза", { select: [["fill", "трюмы заполняются по объёму (P = V/μ)"], ["given", "массы заданы преподавателем"]], wide: true }], ["vol", "Объём трюмов", { select: [["vp", "для штучных грузов (грузы в таре)"], ["vb", "для сыпучих грузов"]], wide: true }],
+        ["_cargo", "", { custom: editor3 }]] }
+    ],
+    figs: { plan: { caption: "Грузовой план судна т/х «Валерий Волков»", draw: drawPlan3 } },
+    solve: solve3, report: report3
+  });
 })();
 
 /* ======================================================================
@@ -10546,11 +10904,11 @@ var TUS = (function () {
     d: [3.13, 3.39, 3.64, 3.89, 4.14, 4.38, 4.63, 4.88, 5.12, 5.36, 5.60, 5.84, 6.07, 6.31, 6.54, 6.77, 7.00, 7.24, 7.46, 7.69, 7.91, 8.13, 8.35, 8.57, 8.79, 9.00, 9.28, 9.43, 9.65],
     zm: [11.45, 10.90, 10.40, 10.02, 9.69, 9.43, 9.21, 9.02, 8.88, 8.76, 8.66, 8.58, 8.51, 8.45, 8.41, 8.38, 8.36, 8.36, 8.37, 8.38, 8.40, 8.41, 8.44, 8.48, 8.51, 8.55, 8.59, 8.64, 8.69],
     q: [19.6, 19.7, 19.9, 20.0, 20.2, 20.3, 20.4, 20.5, 20.7, 20.8, 21.0, 21.1, 21.3, 21.4, 21.5, 21.7, 21.8, 22.0, 22.1, 22.3, 22.4, 22.6, 22.7, 22.9, 23.0, 23.1, 23.2, 23.4, 23.6] };
-  /* балластные танки: табл. 3, 5 методички и прилож. 7 [1]; y снята со схемы танков (стр. 225 [1]) — правый борт «+» */
+  /* балластные танки: табл. 3, 5 методички (δmh50 диптанков № 1 = 0, как в табл. 5); y снята со схемы танков (стр. 225 [1]) — правый борт «+» */
   var TANKS0 = "Форпик ДП; 208,5; 7,11; 0; 0,17; 0\nТанк № 1 ДП; 367,6; 1,85; 0; 0,04; 855\nТанк № 2 Пр. Б; 74,3; 0,74; 3,4; 0,08; 239\nТанк № 2 ЛБ; 92,0; 0,72; −3,4; 0,06; 295\n" +
     "Танк № 3 Пр. Б; 86,6; 0,70; 4,2; 0,06; 445\nТанк № 3 ЛБ; 75,2; 0,70; −4,2; 0,08; 297\nТанк № 4 Пр. Б; 127,2; 0,72; 7,2; 0,05; 237\nТанк № 4 ЛБ; 127,2; 0,72; −7,2; 0,05; 237\n" +
     "Танк № 5 Пр. Б; 122,1; 0,73; 7,2; 0,05; 213\nТанк № 5 ЛБ; 122,1; 0,73; −7,2; 0,05; 213\nТанк № 10 Пр. Б; 91,5; 2,04; 2,6; 0,25; 0\nТанк № 10 ЛБ; 104,7; 2,19; −3,4; 0,23; 0\n" +
-    "Ахтерпик ДП; 130,7; 8,09; 0; 0,28; 0\nДиптанк № 1 Пр. Б; 249,7; 6,23; 6,8; 0,27; 36\nДиптанк № 1 ЛБ; 238,0; 6,23; −6,8; 0,27; 34";
+    "Ахтерпик ДП; 130,7; 8,09; 0; 0,28; 0\nДиптанк № 1 Пр. Б; 249,7; 6,23; 6,8; 0,27; 0\nДиптанк № 1 ЛБ; 238,0; 6,23; −6,8; 0,27; 0";
   var THT = [5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90];
 
   /* формулы вариантов (с доски; коэффициенты меняются во вводных) */
@@ -10632,6 +10990,8 @@ var TUS = (function () {
     var dyn = null, lkr = 0, Mkr = 0;
     if (P.A) { lkr = -P.A.l; Mkr = D0 * lkr; dyn = dynamic(l, P, lkr); }
     /* балласт: операции спрямления (табл. 3, 4) */
+    /* старые сохранения: δmh50 диптанков № 1 было 36/34 (прилож. 7) — по табл. 5 методички 0 */
+    if (d.tanks) d.tanks = String(d.tanks).replace(/(Диптанк № 1 Пр\. Б;\s*249,7;\s*6,23;\s*6,8;\s*0,27;\s*)36\b/, "$10").replace(/(Диптанк № 1 ЛБ;\s*238,0;\s*6,23;\s*−6,8;\s*0,27;\s*)34\b/, "$10");
     var T = parseTanks(d.tanks || TANKS0, warn);
     T.forEach(function (t) { t.My = t.P * t.y; });
     var Lb = T.filter(function (t) { return t.y < -0.05; }), Pb = T.filter(function (t) { return t.y > 0.05; });
@@ -10823,103 +11183,160 @@ var TUS = (function () {
       line(g, [[xv, py((1 - h) * sin(Pp.thV))], [xv, py(0)]], { c: "#8e44ad", w: 1.5, dash: [5, 4] }); txt(g, "λv", (x0 + xv) / 2, py(0) + 40, { s: 14, c: "#8e44ad", w: "700" }); arrow(g, (x0 + xv) / 2 - 20, py(0) + 30, x0, py(0) + 30, { c: "#8e44ad", w: 1.2, hl: 8 }); arrow(g, (x0 + xv) / 2 + 20, py(0) + 30, xv, py(0) + 30, { c: "#8e44ad", w: 1.2, hl: 8 }); }
     txt(g, "Универсальная ДСО т/х «Новгород» (рис. 4.4, " + U.panel + "): DW = " + f(DW, 0) + " т, h = " + f(h, 2) + " м", W / 2, 34, { s: 20, w: "700" });
   }
-  function two(cvs, list, title, marks, lim) {
-    var W = 1400, H = 950, g = cv(cvs, W, H), mn = 0, mx = 0;
-    list.forEach(function (o) { for (var a = 0; a <= (lim || 90); a += 1) { var v = o.l(a); mn = Math.min(mn, v); mx = Math.max(mx, v); } });
-    var M = Math.max(Math.abs(mn), mx), st = M > 1.2 ? 0.2 : M > 0.6 ? 0.1 : M > 0.25 ? 0.05 : 0.02, Y = Math.ceil(M * 1.08 / st) * st;
-    var A = axes(g, [80, 80, 1240, 780], [-90, 90, 10, 0], [-Y, Y, st, st < 0.05 ? 2 : st < 0.1 ? 2 : 1], ["θ, °", "l, м"]);
-    txt(g, title, W / 2, 32, { s: 21, w: "700" });
-    txt(g, "ЛБ", A.px(-80), A.py(0) - 26, { s: 20, w: "700", c: "#555" }); txt(g, "ПрБ", A.px(80), A.py(0) - 26, { s: 20, w: "700", c: "#555" });
-    if (marks) marks(g, A);
-    g.save(); g.beginPath(); g.rect(80, 80, 1240, 780); g.clip();
-    list.forEach(function (o) { var p = []; for (var a = -90; a <= 90 + 1e-9; a += 0.5) p.push([A.px(a), A.py(o.l(a))]); line(g, p, { c: o.c || "#1b3f8f", w: o.w || 3.5, dash: o.dash }); });
+  function two(cvs, list, title, marks, lim, ref, H0) {
+    var W = 1400, H = H0 || 900, g = cv(cvs, W, H), X = Math.min(90, Math.ceil((lim || 90) / 10) * 10), mn = 0, mx = 0;
+    list.forEach(function (o) { for (var a = 0; a <= X; a += 1) { var v = o.l(a); mn = Math.min(mn, v); mx = Math.max(mx, v); } });
+    var M = Math.max(Math.abs(mn), mx); if (ref) M = Math.min(M, Math.max(ref * 1.3, 0.06));
+    var st = M > 1.2 ? 0.2 : M > 0.6 ? 0.1 : M > 0.25 ? 0.05 : 0.02, Y = Math.ceil(M * 1.12 / st) * st;
+    var bx = [90, 86, 1220, 690];
+    g.fillStyle = "#fbfbfd"; g.fillRect(bx[0], bx[1], bx[2], bx[3]);
+    var A = axes(g, bx, [-X, X, 10, 0], [-Y, Y, st, st < 0.05 ? 2 : st < 0.1 ? 2 : 1], ["θ, °", "l, м"]);
+    txt(g, title, W / 2, 34, { s: 22, w: "700" });
+    var yb = bx[1] + bx[3] + 46;
+    arrow(g, A.px(-X * 0.55), yb, A.px(-X * 0.92), yb, { c: "#555", w: 2.5, hl: 14 }); txt(g, "крен на левый борт (ЛБ)", A.px(-X * 0.5), yb, { s: 17, w: "700", c: "#555", a: "left" });
+    arrow(g, A.px(X * 0.55), yb, A.px(X * 0.92), yb, { c: "#555", w: 2.5, hl: 14 }); txt(g, "крен на правый борт (ПрБ)", A.px(X * 0.5), yb, { s: 17, w: "700", c: "#555", a: "right" });
+    var under = marks && marks.under, over = marks && (marks.over || (typeof marks === "function" ? marks : null));
+    g.save(); g.beginPath(); g.rect(bx[0], bx[1], bx[2], bx[3]); g.clip();
+    if (under) under(g, A);
+    list.forEach(function (o) { var p = []; for (var a = -X; a <= X + 1e-9; a += 0.5) p.push([A.px(a), A.py(o.l(a))]); line(g, p, { c: o.c || "#1b3f8f", w: o.w || 3.5, dash: o.dash }); if (o.hi) { var q = []; for (a = -o.hi; a <= o.hi + 1e-9; a += 0.25) q.push([A.px(a), A.py(o.l(a))]); line(g, q, { c: o.hc || "#1f77d0", w: (o.w || 3.5) + 1.5 }); } });
     g.restore();
-    return { g: g, A: A };
+    if (over) over(g, A, { X: X, Y: Y, bx: bx, yb: yb });
+    return { g: g, A: A, X: X, Y: Y, bx: bx };
   }
   function hatch(g, poly, col) {
-    g.save(); g.beginPath(); poly.forEach(function (p, i) { i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]); }); g.closePath(); g.fillStyle = col.replace(/[\d.]+\)$/, "0.15)"); g.fill(); g.clip();
-    for (var k = -1400; k < 1400; k += 12) line(g, [[k, 950], [k + 950, 0]], { c: col, w: 1.2 }); g.restore();
+    g.save(); g.beginPath(); poly.forEach(function (p, i) { i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]); }); g.closePath(); g.fillStyle = col.replace(/[\d.]+\)$/, "0.16)"); g.fill(); g.clip();
+    for (var k = -1400; k < 1400; k += 11) line(g, [[k, 950], [k + 950, 0]], { c: col, w: 1.1 }); g.restore();
   }
   function htxt(g, s, x, y, o) { o = o || {}; g.save(); g.font = (o.w || "400") + " " + (o.s || 18) + "px Arial, sans-serif"; g.textAlign = o.a || "center"; g.textBaseline = o.b || "middle"; g.lineJoin = "round"; g.lineWidth = 6; g.strokeStyle = "rgba(255,255,255,0.92)"; g.strokeText(s, x, y); g.restore(); txt(g, s, x, y, o); }
+  function badge(g, s, x, y, col) { g.save(); g.beginPath(); g.ellipse(x, y, 26, 19, 0, 0, Math.PI * 2); g.fillStyle = "rgba(255,255,255,0.9)"; g.fill(); g.lineWidth = 2.2; g.strokeStyle = col; g.stroke(); g.restore(); txt(g, s, x, y + 1, { s: 18, w: "700", c: col }); }
+  function vdim(g, x, y0, y1, col, lab, side) { arrow(g, x, (y0 + y1) / 2, x, y0, { c: col, w: 1.8, hl: 10 }); arrow(g, x, (y0 + y1) / 2, x, y1, { c: col, w: 1.8, hl: 10 }); if (lab) htxt(g, lab, x + (side === "l" ? -10 : 10), (y0 + y1) / 2, { s: 16, w: "700", c: col, a: side === "l" ? "right" : "left" }); }
+  function legend(g, x, y, rows) {
+    var w = 0; g.font = "400 16px Arial, sans-serif"; rows.forEach(function (r) { w = Math.max(w, g.measureText(r.t).width); });
+    g.save(); g.fillStyle = "rgba(255,255,255,0.95)"; g.strokeStyle = "#bbb"; g.lineWidth = 1; g.fillRect(x, y, w + 86, rows.length * 26 + 16); g.strokeRect(x, y, w + 86, rows.length * 26 + 16); g.restore();
+    rows.forEach(function (r, i) { var yy = y + 21 + i * 26;
+      if (r.fill) { g.save(); g.fillStyle = r.fill; g.fillRect(x + 12, yy - 9, 52, 18); g.restore(); g.strokeStyle = r.c; g.lineWidth = 1.5; g.strokeRect(x + 12, yy - 9, 52, 18); }
+      else if (r.dot) dot(g, x + 38, yy, 6, r.c); else line(g, [[x + 12, yy], [x + 64, yy]], { c: r.c, w: r.w || 3, dash: r.dash });
+      txt(g, r.t, x + 74, yy, { s: 16, a: "left", c: "#222" }); });
+    return w + 86;
+  }
+  function legendC(g, cx, y, rows) { var w = 0; g.font = "400 16px Arial, sans-serif"; rows.forEach(function (r) { w = Math.max(w, g.measureText(r.t).width); }); legend(g, cx - (w + 86) / 2, y, rows); }
   function drawDso(cvs, c) {
-    var P = c.P, l = c.l, dy = c.dyn, Bl = "#1b3f8f", Rd = "#c0392b";
+    var P = c.P, l = c.l, dy = c.dyn, Bl = "#1b3f8f", Rd = "#c0392b", Sb = "#1b6fb3";
     var lim = Math.min(90, (P.thV === null ? 90 : P.thV) + 15);
-    two(cvs, [{ l: l, c: Bl }], "ДСО аварийного судна с отрицательной начальной метацентрической высотой (DWа = " + f(c.DW, 0) + " т, hа = " + f(c.h, 2) + " м)", function (g, A) {
-      if (P.thA !== null && P.thA > 0) {
-        var yb = A.py(0) - 150, xa = A.px(-P.thA), xb = A.px(P.thA);
-        line(g, [[xa, A.py(0) - 10], [xa, yb - 12]], { c: Rd, w: 1.5, dash: [6, 5] }); line(g, [[xb, A.py(0) - 10], [xb, yb - 12]], { c: Rd, w: 1.5, dash: [6, 5] });
-        arrow(g, (xa + xb) / 2, yb, xa, yb, { c: Rd, w: 1.6, hl: 10 }); arrow(g, (xa + xb) / 2, yb, xb, yb, { c: Rd, w: 1.6, hl: 10 });
-        htxt(g, "спрямлять нельзя!", (xa + xb) / 2, yb - 16, { s: 16, w: "700", c: Rd });
-      }
-      if (P.A && dy) {
-        var lk = -c.lkr, a1 = dy.aS1 === null ? -90 : dy.aS1, aD = dy.thD === null ? (dy.aS2 === null ? a1 : dy.aS2) : dy.thD;
-        var p1 = []; for (var a = P.A.a; a >= a1 - 1e-9; a -= 0.25) p1.push([A.px(a), A.py(l(a))]); p1.push([A.px(a1), A.py(lk)]); p1.push([A.px(P.A.a), A.py(lk)]); hatch(g, p1, "rgba(192,57,43,0.55)");
-        if (dy.aS1 !== null && aD < a1 - 0.2) { var p2 = []; for (a = a1; a >= aD - 1e-9; a -= 0.25) p2.push([A.px(a), A.py(Math.min(l(a), lk))]); p2.push([A.px(aD), A.py(lk)]); hatch(g, p2, "rgba(27,111,179,0.55)"); }
-        var xL = A.px(-88); line(g, [[A.px(P.A.a), A.py(lk)], [xL, A.py(lk)]], { c: Rd, w: 2.5 });
-        line(g, [[xL + 26, A.py(0)], [xL + 26, A.py(lk)]], { c: Rd, w: 1.5 }); htxt(g, "lспр", xL + 32, A.py(lk) + 16, { s: 14, w: "700", c: Rd, a: "left" });
-        htxt(g, "lкр.а = " + f(c.lkr, 3) + " м", A.px(P.A.a) + 10, A.py(lk) + 22, { s: 15, w: "700", c: Rd, a: "left" });
-        dot(g, A.px(P.A.a), A.py(P.A.l), 7, Rd); htxt(g, "A", A.px(P.A.a) + 12, A.py(P.A.l) + 4, { s: 18, w: "700", c: Rd, a: "left" });
-        var th1 = P.A.a; for (a = P.A.a; a >= a1; a -= 0.5) if (l(a) > l(th1)) th1 = a;
-        htxt(g, "S1 = Aкр", A.px(th1), A.py(l(th1)) - 16, { s: 16, w: "700", c: Rd });
-        if (dy.thD !== null) {
-          htxt(g, "S2 = Aв", A.px(aD) - 10, A.py(lk) + 26, { s: 16, w: "700", c: "#1b6fb3", a: "right" });
-          line(g, [[A.px(aD), A.py(0) + 6], [A.px(aD), A.py(lk) + 30]], { c: "#1b6fb3", w: 2, dash: [6, 4] }); dot(g, A.px(aD), A.py(lk), 6, "#1b6fb3");
-          htxt(g, "θd = " + f(aD, 1) + "° ↩", A.px(aD), A.py(0) - 18, { s: 16, w: "700", c: "#1b6fb3" });
-          htxt(g, "S1 = S2 = " + f(dy.S1, 4) + " м·рад", A.px(aD) - 10, A.py(lk) + 48, { s: 14, c: "#1b6fb3", a: "right" });
-        } else {
-          htxt(g, "θd нет — опрокидывание", A.px(-62), A.py(lk) + 28, { s: 16, w: "700", c: Rd });
-          htxt(g, "S1 = " + f(dy.S1, 4) + (dy.S2max < 5e-5 ? " > S2max ≈ 0 м·рад" : " > S2max = " + f(dy.S2max, 4) + " м·рад"), A.px(-62), A.py(lk) + 50, { s: 14, c: Rd });
+    var lk = -c.lkr, hasA = P.A && dy, a1, aD, s2on = false;
+    if (hasA) { a1 = dy.aS1 === null ? -90 : dy.aS1; aD = dy.thD === null ? (dy.aS2 === null ? a1 : dy.aS2) : dy.thD; s2on = dy.aS1 !== null && aD < a1 - 0.2 && (dy.thD !== null || dy.S2max >= 5e-5); }
+    var ta = P.thA > 0 ? P.thA : 20, r0 = Math.max(Math.min(hasA ? Math.min(aD, -ta) : -ta, -ta) - 1, -(P.thV === null ? 90 : P.thV) - 5), ref = Math.max(c.lkr || 0, 0.03);
+    for (var q = r0; q <= ta + 4; q += 0.5) ref = Math.max(ref, Math.abs(l(q)));
+    two(cvs, [{ l: l, c: "#222", w: 3.2, hi: P.thA > 0 ? P.thA : 0, hc: Bl }], "ДСО аварийного судна (DWа = " + f(c.DW, 0) + " т, hа = " + f(c.h, 2) + " м)" + (hasA ? ":  Aкр = Aв ?" : ""), {
+      under: function (g, A) {
+        if (!hasA) return;
+        var p1 = []; for (var a = P.A.a; a >= a1 - 1e-9; a -= 0.25) p1.push([A.px(a), A.py(l(a))]); p1.push([A.px(a1), A.py(lk)]); p1.push([A.px(P.A.a), A.py(lk)]); hatch(g, p1, "rgba(192,57,43,0.6)");
+        if (s2on) { var p2 = []; for (a = a1; a >= aD - 1e-9; a -= 0.25) p2.push([A.px(a), A.py(Math.min(l(a), lk))]); p2.push([A.px(aD), A.py(lk)]); hatch(g, p2, "rgba(27,111,179,0.6)"); }
+        line(g, [[A.px(P.A.a), A.py(lk)], [A.px(-90), A.py(lk)]], { c: Rd, w: 2.6 });
+      },
+      over: function (g, A, Z) {
+        var y0 = A.py(0);
+        if (P.thA !== null && P.thA > 0) {
+          var yb = Z.bx[1] + 34, xa = A.px(-P.thA), xb = A.px(P.thA);
+          line(g, [[xa, y0 - 8], [xa, yb - 10]], { c: Rd, w: 1.5, dash: [6, 5] }); line(g, [[xb, y0 - 8], [xb, yb - 10]], { c: Rd, w: 1.5, dash: [6, 5] });
+          arrow(g, (xa + xb) / 2, yb, xa, yb, { c: Rd, w: 1.8, hl: 11 }); arrow(g, (xa + xb) / 2, yb, xb, yb, { c: Rd, w: 1.8, hl: 11 });
+          htxt(g, "спрямлять нельзя!", (xa + xb) / 2, yb - 17, { s: 18, w: "700", c: Rd });
+          [P.thA, -P.thA].forEach(function (a) { dot(g, A.px(a), y0, 7, Bl); htxt(g, (a > 0 ? "+" : "−") + "θа = " + (a > 0 ? "" : "−") + f(P.thA, 1) + "°", A.px(a) - 10, y0 + (a > 0 ? -22 : 44), { s: 16, w: "700", c: Bl, a: "right" }); });
         }
-      }
-      if (P.thA !== null) [P.thA, -P.thA].forEach(function (a) { dot(g, A.px(a), A.py(0), 6, "#111"); htxt(g, (a > 0 ? "+" : "−") + "θа", A.px(a), A.py(0) + (a > 0 ? 40 : -40), { s: 16, w: "700" }); });
-      if (P.thV !== null) [P.thV, -P.thV].forEach(function (a) { dot(g, A.px(a), A.py(0), 6, "#8e44ad"); htxt(g, (a > 0 ? "" : "−") + "θv", A.px(a), A.py(0) + (a > 0 ? 40 : -40), { s: 16, w: "700", c: "#8e44ad" }); });
-      if (P.max.l > 0) { dot(g, A.px(P.max.a), A.py(P.max.l), 5, Bl); htxt(g, "lmax = " + f(P.max.l, 3), A.px(P.max.a), A.py(P.max.l) - 18, { s: 14, w: "700", c: Bl }); }
-    }, lim);
+        if (P.thV !== null) [P.thV, -P.thV].forEach(function (a) { if (Math.abs(a) > Z.X) return; dot(g, A.px(a), y0, 6, "#8e44ad"); htxt(g, (a > 0 ? "" : "−") + "θv", A.px(a) + (a > 0 ? 6 : -6), y0 - 22, { s: 16, w: "700", c: "#8e44ad", a: a > 0 ? "left" : "right" }); });
+        if (P.max.l > 0) { if (P.max.l < Z.Y) { dot(g, A.px(P.max.a), A.py(P.max.l), 5, "#222"); htxt(g, "lmax = " + f(P.max.l, 3) + " м", A.px(P.max.a), A.py(P.max.l) - 18, { s: 15, w: "700", c: "#222" }); }
+          else { arrow(g, A.px(P.max.a), Z.bx[1] + 44, A.px(P.max.a), Z.bx[1] + 8, { c: "#222", w: 1.6, hl: 9 }); htxt(g, "lmax = " + f(P.max.l, 3) + " м (выше рамки)", A.px(P.max.a), Z.bx[1] + 58, { s: 14, w: "700", c: "#222" }); } }
+        if (!hasA) return;
+        var xA = A.px(P.A.a), yA = A.py(P.A.l);
+        dot(g, xA, yA, 8, Rd); htxt(g, "A", xA + 14, yA + 14, { s: 20, w: "700", c: Rd, a: "left" });
+        if (A.py(lk) - y0 > 40) vdim(g, xA + 34, y0, A.py(lk), Rd, "lкр.а = " + f(c.lkr, 3) + " м", "r");
+        else { vdim(g, xA + 34, y0, A.py(lk), Rd, "", "r"); htxt(g, "lкр.а = " + f(c.lkr, 3) + " м", xA + 44, A.py(lk) + 26, { s: 16, w: "700", c: Rd, a: "left" }); }
+        htxt(g, "lспр = lкр.а (спрямляющий момент)", A.px(-Z.X) + 8, A.py(lk) + (A.py(lk) - y0 < 45 ? 18 : -16), { s: 14, w: "700", c: Rd, a: "left" });
+        arrow(g, xA - 10, A.py(lk) - 14, xA - 90, A.py(lk) - 14, { c: Sb, w: 2.2, hl: 11 });
+        var cx = 0, cy = 0, n = 0; for (var a = P.A.a; a >= a1; a -= 1) { var v = l(a); if (v > lk) { cx += a; cy += (v + lk) / 2; n++; } }
+        if (n) badge(g, "S1", A.px(cx / n), A.py(cy / n), Rd);
+        if (s2on) { cx = 0; cy = 0; n = 0; for (a = a1; a >= aD; a -= 0.5) { v = l(a); if (v < lk) { cx += a; cy += (Math.max(v, lk - (Z.Y + lk) * 0.9) + lk) / 2; n++; } } if (n) badge(g, "S2", A.px(cx / n), A.py(cy / n), Sb); }
+        if (dy.thD !== null) {
+          var xd = A.px(aD); line(g, [[xd, y0 - 40], [xd, A.py(lk)]], { c: Sb, w: 2.2, dash: [7, 5] }); dot(g, xd, A.py(lk), 6, Sb); dot(g, xd, y0, 6, Sb);
+          htxt(g, "θd = " + f(aD, 1) + "° ↩", xd, y0 - 54, { s: 18, w: "700", c: Sb });
+        }
+        var t = dy.thD !== null ? "S1 = S2 = " + f(dy.S1, 4) + " м·рад → судно остановится при θd = " + f(aD, 1) + "° и пойдёт обратно"
+          : "S1 = " + f(dy.S1, 4) + " м·рад > S2max " + (dy.S2max < 5e-5 ? "≈ 0" : "= " + f(dy.S2max, 4)) + " м·рад → θd нет, судно ОПРОКИДЫВАЕТСЯ";
+        legendC(g, 700, Z.yb + 30, [
+          { c: Bl, w: 5, t: "участок неустойчивого равновесия −θа…+θа" },
+          { fill: "rgba(192,57,43,0.25)", c: Rd, t: "S1 = Aкр — работа кренящего момента (судно разгоняется на ЛБ)" },
+          { fill: "rgba(27,111,179,0.25)", c: Sb, t: "S2 = Aв — работа восстанавливающего момента (тормозит)" },
+          { c: dy.thD !== null ? Sb : Rd, dot: true, t: t }]);
+      } }, lim, ref, 1020);
   }
   function drawV(cvs, c) {
-    var yOn = c.lMy > 1e-4, cl = [{ l: c.l, c: "#1b3f8f", dash: [10, 6], w: 3 }, { l: c.Sv.l, c: "#18a0c9" }];
-    two(cvs, cl, "ДСО до (DWа = " + f(c.DW, 0) + " т, hа = " + f(c.h, 2) + " м) и после восстановления остойчивости (DWв = " + f(c.DWv, 0) + " т, hв = " + f(c.hv, 3) + " м)", function (g, A) {
-      [[c.P, "#1b3f8f", "а"], [c.Pv, "#18a0c9", "в"]].forEach(function (q, k) {
-        var P = q[0]; if (P.thA !== null && P.thA > 0) [P.thA, -P.thA].forEach(function (a) { dot(g, A.px(a), A.py(0), 6, q[1]); txt(g, (a > 0 ? "+" : "−") + "θ" + q[2], A.px(a), A.py(0) + (a > 0 ? 40 + 22 * k : -40 - 22 * k), { s: 15, w: "700", c: q[1] }); });
-        if (P.thV !== null) [P.thV, -P.thV].forEach(function (a) { dot(g, A.px(a), A.py(0), 5, q[1]); txt(g, "θv" + q[2], A.px(a), A.py(0) + (a > 0 ? 40 + 22 * k : -40 - 22 * k), { s: 14, w: "700", c: q[1] }); });
+    var yOn = c.lMy > 1e-4, Ca = "#1b3f8f", Cv = "#0e9f6e", Rd = "#c0392b";
+    var cl = [{ l: c.l, c: Ca, dash: [10, 7], w: 3 }, { l: c.Sv.l, c: Cv, w: 4 }];
+    var ref = Math.max(c.P.max.l, c.Pv.max.l, yOn ? c.lMy : 0, 0.05);
+    two(cvs, cl, "ДСО до и после восстановления остойчивости", { over: function (g, A, Z) {
+      var y0 = A.py(0);
+      [[c.P, Ca, "а"], [c.Pv, Cv, "в"]].forEach(function (q, k) {
+        var P = q[0]; if (P.thA !== null && P.thA > 0) [P.thA, -P.thA].forEach(function (a) { dot(g, A.px(a), y0, 6, q[1]); htxt(g, (a > 0 ? "+" : "−") + "θ" + q[2], A.px(a), y0 + (a > 0 ? 40 + 22 * k : -24 - 22 * k), { s: 16, w: "700", c: q[1] }); });
+        if (P.thV !== null && P.thV <= Z.X) [P.thV, -P.thV].forEach(function (a) { dot(g, A.px(a), y0, 5, q[1]); htxt(g, "θv" + q[2], A.px(a), y0 + (a > 0 ? 40 + 22 * k : -24 - 22 * k), { s: 15, w: "700", c: q[1] }); });
+        if (P.max.l > 0 && P.max.l < Z.Y) { dot(g, A.px(P.max.a), A.py(P.max.l), 5, q[1]); htxt(g, "lmax" + q[2] + " = " + f(P.max.l, 3), A.px(P.max.a), A.py(P.max.l) - 16, { s: 15, w: "700", c: q[1] }); }
       });
-      line(g, [[930, 120], [990, 120]], { c: "#1b3f8f", w: 3, dash: [10, 6] }); txt(g, "аварийное судно", 1000, 120, { s: 16, a: "left" });
-      line(g, [[930, 150], [990, 150]], { c: "#18a0c9", w: 3.5 }); txt(g, "после восстановления", 1000, 150, { s: 16, a: "left" });
+      var rows = [{ c: Ca, w: 3, dash: [10, 7], t: "аварийное судно: DWа = " + f(c.DW, 0) + " т, hа = " + f(c.h, 3) + " м" },
+        { c: Cv, w: 4, t: "после балластировки: DWв = " + f(c.DWv, 0) + " т, hв = " + f(c.hv, 3) + " м" }];
       if (yOn) {
-        var py = []; for (var a = 0; a <= 90 + 1e-9; a += 0.5) py.push([A.px(a), A.py(c.lMy * cos(a))]); line(g, py, { c: "#c0392b", w: 2.5, dash: [7, 5] });
-        line(g, [[930, 180], [990, 180]], { c: "#c0392b", w: 2.5, dash: [7, 5] }); txt(g, "YG·cos θ (YG = " + f(c.lMy, 3) + " м)", 1000, 180, { s: 16, a: "left" });
-        if (c.thMy !== null) { var yy = c.lMy * cos(c.thMy); dot(g, A.px(c.thMy), A.py(yy), 7, "#c0392b"); line(g, [[A.px(c.thMy), A.py(yy)], [A.px(c.thMy), A.py(0)]], { c: "#c0392b", w: 1.5, dash: [4, 4] });
-          htxt(g, "θ = " + f(c.thMy, 1) + "°", A.px(c.thMy) - 8, A.py(yy) - 20, { s: 16, w: "700", c: "#c0392b", a: "right" }); }
-        if (c.thMyU !== null) { var yu = c.lMy * cos(c.thMyU); dot(g, A.px(c.thMyU), A.py(yu), 5, "#7f8c8d"); htxt(g, "неуст. " + f(c.thMyU, 1) + "°", A.px(c.thMyU) + 8, A.py(yu) - 18, { s: 13, c: "#7f8c8d", a: "left" }); }
+        g.save(); g.beginPath(); g.rect(Z.bx[0], Z.bx[1], Z.bx[2], Z.bx[3]); g.clip();
+        var py = []; for (var a = 0; a <= Z.X + 1e-9; a += 0.5) py.push([A.px(a), A.py(c.lMy * cos(a))]); line(g, py, { c: Rd, w: 2.6, dash: [7, 5] }); g.restore();
+        rows.push({ c: Rd, w: 2.6, dash: [7, 5], t: "плечо от смещения ЦТ балластом: YG·cos θ, YG = " + f(c.lMy, 3) + " м" });
+        if (c.thMy !== null) { var yy = c.lMy * cos(c.thMy); dot(g, A.px(c.thMy), A.py(yy), 8, Rd); line(g, [[A.px(c.thMy), A.py(yy)], [A.px(c.thMy), y0]], { c: Rd, w: 1.6, dash: [4, 4] });
+          htxt(g, "крен θ = " + f(c.thMy, 1) + "°", A.px(c.thMy) - 10, A.py(yy) - 22, { s: 17, w: "700", c: Rd, a: "right" });
+          rows.push({ c: Rd, dot: true, t: "равновесие после балластировки: θ = " + f(c.thMy, 1) + "° (устойчивое)" }); }
+        if (c.thMyU !== null && c.thMyU <= Z.X) { var yu = c.lMy * cos(c.thMyU); dot(g, A.px(c.thMyU), A.py(yu), 5, "#7f8c8d"); htxt(g, "неуст. " + f(c.thMyU, 1) + "°", A.px(c.thMyU) + 8, A.py(yu) - 18, { s: 14, c: "#7f8c8d", a: "left" }); }
       }
-    }, Math.min(90, Math.max(c.P.thV === null ? 90 : c.P.thV, c.Pv.thV === null ? 90 : c.Pv.thV) + 15));
+      legendC(g, 700, Z.yb + 30, rows);
+    } }, Math.min(90, Math.max(c.P.thV === null ? 90 : c.P.thV, c.Pv.thV === null ? 90 : c.Pv.thV) + 15), ref, 1000);
   }
-  /* схемы сил: поперечное сечение, накренённое на θ; m ниже G (h < 0) */
+  /* схемы сил: поперечное сечение (вид с кормы), крен на ПрБ на угол θ; h < 0.
+     Линия действия силы плавучести проходит через C и пересекает ДП в точке m (при малых углах — поперечный метацентр);
+     плечо l = (zm − zG)·sin θ. Расстояния G–m показаны в увеличенном масштабе. */
   function drawForces(cvs, c) {
-    var W = 1500, H = 620, g = cv(cvs, W, H), P = c.P, thA = P.thA || 20;
-    var cases = [[Math.max(3, thA * 0.5), "θ < θа"], [thA, "θ = θа"], [Math.min(thA + (P.end - thA) * 0.45, thA + 18), "θ > θа"]];
+    var W = 1500, H = 660, g = cv(cvs, W, H), P = c.P, thA = P.thA || 20;
+    var cases = [[Math.max(4, thA * 0.5), "θ < θа", "l < 0 — момент кренит дальше", "#c0392b"], [thA, "θ = θа", "l = 0 — равновесие", "#0e9f6e"],
+      [Math.min(thA + (P.end - thA) * 0.45, thA + 18), "θ > θа", "l > 0 — момент возвращает к θа", "#1b6fb3"]];
+    var s = 14, B = 20, D = 13, dr = 6.5, zg = 8.6, R0 = 2.4;
     cases.forEach(function (cs, k) {
-      var th = cs[0], ox = 250 + k * 500, oy = 330, s = 13, B = 20, D = 14, dr = 6.5, zg = 8, l = c.l(th), Lsc = 600;
-      var rot = function (x, z) { var a = th * RAD; return [ox + (x * Math.cos(a) + z * Math.sin(a)) * s, oy - (-x * Math.sin(a) + z * Math.cos(a)) * s + 100]; };
-      var hull = [[-B / 2, D], [-B / 2, 2], [-B / 2 + 2, 0], [B / 2 - 2, 0], [B / 2, 2], [B / 2, D]].map(function (p) { return rot(p[0], p[1]); });
+      var th = cs[0], ox = 250 + k * 500, base = 500, l = k === 0 ? Math.min(c.l(th), -1e-4) : k === 2 ? Math.max(c.l(th), 1e-4) : 0, col = cs[3], same = k === 1, sn = Math.sin(th * RAD);
+      var rot = function (x, z) { var a = th * RAD; return [ox + (x * Math.cos(a) + z * Math.sin(a)) * s, base - (-x * Math.sin(a) + z * Math.cos(a)) * s - 30]; };
       var wl = rot(0, dr)[1];
-      line(g, [[ox - 190, wl], [ox + 190, wl]], { c: "#1b6fb3", w: 2 }); txt(g, "ВЛ", ox + 196, wl, { s: 14, c: "#1b6fb3", a: "left" });
-      line(g, hull, { w: 2.5, fill: "rgba(0,0,0,0.03)" }); line(g, [rot(0, -1), rot(0, D + 2)], { c: "#555", w: 1.2, dash: [8, 4] }); txt(g, "ДП", rot(0, D + 3)[0], rot(0, D + 3)[1], { s: 13, c: "#555" });
-      var Gp = rot(0, zg), Cx = Gp[0] + l * Lsc, Cp = [Cx, wl + 40];
-      dot(g, Gp[0], Gp[1], 6); txt(g, "G", Gp[0] - 14, Gp[1] - 10, { s: 16, w: "700" });
-      var mp = rot(0, zg + c.h * 2.5); dot(g, mp[0], mp[1], 5, "#8e44ad"); txt(g, "m", mp[0] - 14, mp[1] + 6, { s: 15, w: "700", c: "#8e44ad" });
-      dot(g, Cp[0], Cp[1], 6, "#1b6fb3"); txt(g, "C", Cp[0] + 12, Cp[1] + 4, { s: 16, w: "700", c: "#1b6fb3" });
-      arrow(g, Gp[0], Gp[1], Gp[0], Gp[1] + 95, { w: 2.5 }); txt(g, "Δg", Gp[0] - 26, Gp[1] + 70, { s: 14 });
-      arrow(g, Cp[0], Cp[1], Cp[0], Cp[1] - 140, { w: 2.5, c: "#1b6fb3" }); txt(g, "γ∇", Cp[0] + 26, Cp[1] - 110, { s: 14, c: "#1b6fb3" });
-      if (Math.abs(l) > 0.004) { line(g, [[Gp[0], Gp[1] + 40], [Cx, Gp[1] + 40]], { c: "#c0392b", w: 2 }); txt(g, "l " + (l < 0 ? "< 0" : "> 0"), (Gp[0] + Cx) / 2, Gp[1] + 58, { s: 14, w: "700", c: "#c0392b" }); }
-      else txt(g, "l = 0", Gp[0] + 30, Gp[1] + 50, { s: 14, w: "700", c: "#c0392b", a: "left" });
-      var arc = []; for (var a = -40; a <= 40; a += 4) arc.push([ox + 160 * Math.sin((a) * RAD), oy - 120 + 30 * Math.cos(a * RAD)]);
-      var dir = l < -0.004 ? 1 : l > 0.004 ? -1 : 0;
-      if (dir) { line(g, arc, { c: "#c0392b", w: 2 }); var e = dir > 0 ? arc[arc.length - 1] : arc[0], e2 = dir > 0 ? arc[arc.length - 2] : arc[1]; arrow(g, e2[0], e2[1], e[0], e[1], { c: "#c0392b", w: 2, hl: 12 }); txt(g, dir > 0 ? "момент кренит" : "момент выпрямляет", ox, oy - 145, { s: 15, w: "700", c: "#c0392b" }); }
-      else txt(g, "равновесие", ox, oy - 145, { s: 15, w: "700", c: "#c0392b" });
-      txt(g, cs[1] + " (θ = " + f(th, 0) + "°)", ox, 40, { s: 19, w: "700" });
+      g.save(); g.fillStyle = "rgba(27,111,179,0.10)"; g.fillRect(ox - 240, wl, 480, base + 80 - wl); g.restore();
+      var hull = [rot(-B / 2, D)];
+      for (var t = 180; t <= 270; t += 10) hull.push(rot(-B / 2 + R0 + R0 * Math.cos(t * RAD), R0 + R0 * Math.sin(t * RAD)));
+      for (t = 270; t <= 360; t += 10) hull.push(rot(B / 2 - R0 + R0 * Math.cos(t * RAD), R0 + R0 * Math.sin(t * RAD)));
+      hull.push(rot(B / 2, D));
+      line(g, hull, { w: 2.8, close: true, fill: "rgba(250,250,250,0.85)" });
+      line(g, [[ox - 235, wl], [ox + 235, wl]], { c: "#1b6fb3", w: 2.4 }); txt(g, "ВЛ", ox - 232, wl - 14, { s: 15, w: "700", c: "#1b6fb3", a: "left" });
+      var d1 = rot(0, -1.2), d2 = rot(0, D + 5); line(g, [d1, d2], { c: "#666", w: 1.3, dash: [12, 4, 2, 4] }); txt(g, "ДП", d2[0] - 8, d2[1] + 4, { s: 14, c: "#555", a: "right" });
+      var pv = rot(0, D + 0.5), Rr = 62, arcp = []; for (t = 0; t <= th; t += 1) arcp.push([pv[0] + Rr * Math.sin(t * RAD), pv[1] - Rr * Math.cos(t * RAD)]);
+      line(g, [[pv[0], pv[1]], [pv[0], pv[1] - Rr - 14]], { c: "#666", w: 1.2, dash: [3, 4] }); line(g, arcp, { c: "#333", w: 1.8 });
+      txt(g, "θ = " + f(th, 0) + "°", pv[0] + Rr * Math.sin(th * RAD) + 10, pv[1] - Rr * Math.cos(th * RAD) - 4, { s: 16, w: "700", a: "left" });
+      var Gp = rot(0, zg), dm = same ? 0 : Math.max(2.6, Math.min(8.2, 30 / (s * Math.max(sn, 0.02)))) * (l < 0 ? -1 : 1), mp = rot(0, zg + dm);
+      var Cx = same ? Gp[0] : mp[0], Cy = rot(0, 3.0)[1];
+      line(g, [[Gp[0], Gp[1] - 40], [Gp[0], base + 40]], { c: "#111", w: 1, dash: [4, 4] });
+      if (!same) line(g, [[Cx, Math.min(mp[1], Gp[1]) - 40], [Cx, base + 40]], { c: "#1b6fb3", w: 1, dash: [4, 4] });
+      var Lf = same ? 26 : 62, gr = Cx < Gp[0];
+      arrow(g, Gp[0], Gp[1], Gp[0], Gp[1] + Lf, { w: 3.2, hl: 14 }); txt(g, "Δ·g", Gp[0] + (gr ? 10 : -10), Gp[1] + Lf - 6, { s: 17, w: "700", a: gr ? "left" : "right" });
+      arrow(g, Cx, Cy, Cx, Cy - Lf, { w: 3.2, hl: 14, c: "#1b6fb3" }); txt(g, "γ∇", Cx + (gr ? -10 : 10), Cy - Lf + 6, { s: 17, w: "700", c: "#1b6fb3", a: gr ? "right" : "left" });
+      dot(g, Gp[0], Gp[1], 7); txt(g, "G", Gp[0] + (gr ? 12 : -12), Gp[1] - 12, { s: 19, w: "700", a: gr ? "left" : "right" });
+      if (!same) { dot(g, mp[0], mp[1], 6, "#8e44ad"); txt(g, "m", mp[0] + (gr ? -12 : 12), mp[1], { s: 18, w: "700", c: "#8e44ad", a: gr ? "right" : "left" });
+      }
+      dot(g, Cx, Cy, 7, "#1b6fb3"); txt(g, "C", Cx + (gr ? -12 : 12), Cy + 14, { s: 19, w: "700", c: "#1b6fb3", a: gr ? "right" : "left" });
+      var yl = base + 26;
+      if (!same) { line(g, [[Math.min(Gp[0], Cx) - 14, yl], [Math.min(Gp[0], Cx), yl]], { c: col, w: 1.6 }); line(g, [[Math.max(Gp[0], Cx), yl], [Math.max(Gp[0], Cx) + 14, yl]], { c: col, w: 1.6 });
+        arrow(g, Math.min(Gp[0], Cx) - 14, yl, Math.min(Gp[0], Cx), yl, { c: col, w: 1.8, hl: 9 }); arrow(g, Math.max(Gp[0], Cx) + 14, yl, Math.max(Gp[0], Cx), yl, { c: col, w: 1.8, hl: 9 }); }
+      txt(g, same ? "l = 0 (G и C на одной вертикали)" : (l < 0 ? "l < 0" : "l > 0"), (Gp[0] + Cx) / 2, yl + 24, { s: 17, w: "700", c: col });
+      if (!same) { var dir = l < 0 ? 1 : -1, ar = []; for (var b = -32; b <= 32; b += 3) ar.push([ox + 120 * Math.sin(b * RAD), 128 - 26 * Math.cos(b * RAD) + 26]);
+        line(g, ar, { c: col, w: 2.8 }); var e = dir > 0 ? ar[ar.length - 1] : ar[0], e2 = dir > 0 ? ar[ar.length - 3] : ar[2]; arrow(g, e2[0], e2[1], e[0], e[1], { c: col, w: 2.8, hl: 15 }); }
+      txt(g, cs[1], ox, 44, { s: 23, w: "700" }); txt(g, cs[2], ox, 76, { s: 17, w: "700", c: col });
     });
-    txt(g, "Вид с кормы, крен на правый борт; m — поперечный метацентр (ниже G: h < 0)", W / 2, H - 20, { s: 15, c: "#444" });
+    txt(g, "Вид с кормы, крен на правый борт (схема, не в масштабе). G — центр тяжести, C — центр величины, m — точка пересечения линии действия силы плавучести с ДП; при h < 0 при малых углах m ниже G.", W / 2, H - 18, { s: 14, c: "#444" });
   }
 
   var VARS = []; for (var i = 1; i <= 30; i++) VARS.push(String(i));
@@ -10939,7 +11356,7 @@ var TUS = (function () {
       { title: "Исходные данные напрямую", note: "Пусто — по формулам выше.", fields: [["DWx", "Дедвейт DWа", { num: true, unit: "т", ph: "по формуле" }], ["hx", "Метацентрическая высота hа", { num: true, unit: "м", ph: "по формуле" }]] },
       { title: "Плечи ДСО", note: "«По универсальной ДСО» — плечи снимаются с оцифрованной диаграммы (рис. 4.4, а при DW < 6600 т; рис. 4.4, б при DW ≥ 6600 т). «Ввести вручную» — " + THT.length + " значений l через «;» для θ = " + THT.join(", ") + "°.",
         fields: [["lsrc", "Источник", { select: [["uni", "по универсальной ДСО"], ["man", "ввести вручную"]] }], ["lman", "l для 5…90° через «;»", { area: true, rows: 2, wide: true }]] },
-      { title: "Балластные танки", note: "Строка: наименование; P100, т; zp100, м; y, м (ПрБ «+», ЛБ «−»); δz, м на 10 т; δmh50, т·м. P, z, δz, δmh — табл. 5 методички и прилож. 7 [1]; y — со схемы танков (стр. 225 [1]).",
+      { title: "Балластные танки", note: "Строка: наименование; P100, т; zp100, м; y, м (ПрБ «+», ЛБ «−»); δz, м на 10 т; δmh50, т·м. P, z, δz, δmh — табл. 5 методички; y — со схемы танков (стр. 225 [1]).",
         fields: [["tanks", "Танки", { area: true, rows: 8, wide: true }]] },
       { title: "Последовательность балластировки", note: "«Автоматически» — танки, удовлетворяющие четырём параметрам (① ZG↓, ② YG ≥ 0, ③ zб ≤ zн.п, ④ ФБ ≥ 0), по убыванию фактора балластировки ФБ. «Вручную» — названия танков по строкам в нужном порядке (несоблюдение параметров выдаётся предупреждением).",
         fields: [["seqMode", "Режим", { select: [["auto", "автоматически"], ["man", "вручную"]] }], ["fbMin", "Условие ④", { select: [["b", "ФБ ≥ 0 (доска)"], ["m", "ФБ ≥ −0,01 м (методичка)"]] }], ["seqTxt", "Танки по порядку", { area: true, rows: 3, wide: true }]] }],
