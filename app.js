@@ -8992,6 +8992,202 @@ var LR1Engine = (function () {
       D.para([{ t: "Ответ: ", bold: true }, Object.keys(r.V).map(function (k) { return r.V[k].L.res[0].replace(/\s+\(P.*$/, ""); }).join("; ") + " (P = 68,3 %)."], { before: 6 });
     }
   }));
+
+  /* ======================================================================
+     ЛР №7 «Расчёт элементов линий положения» (учебник Кузьмина, гл. 12–14).
+     Пять линий положения: пеленг-1, дистанция, высота светила-1, пеленг-2, высота светила-2.
+     Пеленг: τ = П − 90°, g = 57,3 / D (°/милю); дистанция: τ = П ± 180°, g = 1, m_D = k·D;
+     высота: τ = Ac (круговой счёт), g = 1, Δn = hи − hс. СКП ЛП: m_лп = m_U / g.
+     Уравнение ЛП (13.5): cos τ·Δφ + sin τ·Δw = Δn. Прокладка — 1 см = 1 миля (истинный масштаб в Word).
+     Таблицы методички нет: исходные данные вводятся в форме (по умолчанию — задача 16921).
+     ====================================================================== */
+  var LP7 = [
+    { id: "p1", kind: "brg", name: "Пеленг — 1" }, { id: "d", kind: "dist", name: "Дистанция" }, { id: "h1", kind: "alt", name: "Высота светила — 1" },
+    { id: "p2", kind: "brg", name: "Пеленг — 2" }, { id: "h2", kind: "alt", name: "Высота светила — 2" }];
+  var DEF7 = { code: "16921", p1_P: "146,2", p1_D: "9,0", p1_m: "1,50", p1_dn: "+2,5", d_D: "45,1", d_P: "228,7", d_k: "0,0182", d_m: "", d_dn: "+1,9",
+    h1_A: "22,9 NE", h1_hi: "", h1_hc: "", h1_dn: "−2,2", h1_m: "0,90", p2_P: "331,4", p2_D: "13,4", p2_m: "1,26", p2_dn: "+3,3",
+    h2_A: "50,6 NW", h2_hi: "32°58,4′", h2_hc: "33°03,2′", h2_dn: "", h2_m: "2,24" };
+  function n7(s) { var t = String(s == null ? "" : s).replace(/[−–]/g, "-").replace(/[°′'″\s]/g, "").replace(",", "."); return t === "" || t === "-" || t === "+" ? NaN : +t; }
+  function dec7(s) { var m = String(s).match(/[.,](\d+)/); return m ? m[1].length : 0; }
+  function deg7(x) { return ((x % 360) + 360) % 360; }
+  /* «22,9 NE», «N 120,5 E», «50,6 NW», «309,4» → круговой азимут и пояснение */
+  function az7(s) {
+    var t = String(s || "").toUpperCase().replace(/[СЮВЗ]/g, function (c) { return { "С": "N", "Ю": "S", "В": "E", "З": "W" }[c]; });
+    var x = n7(t.replace(/[NSEW]/g, "")), ns = (t.match(/[NS]/) || [""])[0], ew = (t.match(/[EW]/) || [""])[0];
+    if (!isFinite(x)) return null;
+    if (!ns || !ew) return { v: deg7(x), how: "" };
+    var v = ns === "N" ? (ew === "E" ? x : 360 - x) : (ew === "E" ? 180 - x : 180 + x);
+    var how = ns === "N" && ew === "E" ? "" : ns === "N" ? "360° − " + f(x, 1) + "° = " : ew === "E" ? "180° − " + f(x, 1) + "° = " : "180° + " + f(x, 1) + "° = ";
+    return { v: deg7(v), how: how, raw: (Math.abs(x) <= 90 ? f(x, 1) + "° " + ns + ew : ns + " " + f(x, 1) + "° " + ew) };
+  }
+  function hm7(s) { var m = String(s || "").replace(/['’`]/g, "′").match(/^\s*(\d+)\s*°\s*(\d+(?:[.,]\d+)?)\s*′?\s*$/); return m ? +m[1] * 60 + +m[2].replace(",", ".") : NaN; }
+  function sg7(x, n) { return (x > 0 ? "+" : x < 0 ? "−" : "") + App.f(Math.abs(x), n); }
+  function solve7line(d, L) {
+    var g = function (k) { return d[L.id + "_" + k]; }, o = { L: L, lines: [], warn: [] }, R = Math.PI / 180;
+    if (L.kind === "brg") {
+      var P = n7(g("P")), D = n7(g("D")), m = n7(g("m")), dn = n7(g("dn"));
+      if (!isFinite(P)) return null;
+      if (!(D > 0) || !(m >= 0) || !isFinite(dn)) { o.warn.push(L.name + ": нужны П, D, m_П и Δn."); return o; }
+      o.tau = deg7(P - 90); o.g = 57.3 / D; o.mU = m; o.dn = dn; o.dmU = Math.max(2, dec7(g("m")));
+      o.src = "П = " + f(P, 1) + "°; D = " + f(D, 1) + " мили; m_{П} = ± " + App.f(m, o.dmU) + "°";
+      o.mUs = "m_{П} = ± " + App.f(m, o.dmU) + "°";
+      o.lines = ["τ = П − 90° = " + f(P, 1) + "° − 90°" + (P < 90 ? " + 360°" : "") + " = " + f(o.tau, 1) + "°",
+        "g = 57,3 / D = 57,3 / " + f(D, 1) + " = " + f(o.g, 3) + " °/милю",
+        "m_{лп} = m_{П} / g = " + App.f(m, o.dmU) + " / " + f(o.g, 3) + " = " + f(m / o.g, 3) + " ≈ ± " + f(m / o.g, 2) + " мили"];
+      o.dirLP = deg7(P);
+    } else if (L.kind === "dist") {
+      var D2 = n7(g("D")), P2 = n7(g("P")), k = n7(g("k")), md = n7(g("m")), dn2 = n7(g("dn"));
+      if (!isFinite(D2)) return null;
+      if (!isFinite(P2) || !(isFinite(k) || isFinite(md)) || !isFinite(dn2)) { o.warn.push(L.name + ": нужны D, П на ориентир, k (или m_D) и Δn."); return o; }
+      o.tau = deg7(P2 + (P2 < 180 ? 180 : -180)); o.g = 1; o.dn = dn2;
+      o.mU = isFinite(md) ? md : k * D2; o.dmU = 3;
+      o.src = "D = " + f(D2, 1) + " мили; П = " + f(P2, 1) + "°; " + (isFinite(md) ? "m_{D} = ± " + f(md, 2) + " мили" : "k = " + App.f(k, Math.max(3, dec7(g("k")))));
+      o.mUs = "m_{D} = ± " + f(o.mU, 3) + " мили";
+      o.lines = ["τ = П ± 180° = " + f(P2, 1) + "° " + (P2 < 180 ? "+" : "−") + " 180° = " + f(o.tau, 1) + "°  (от ориентира через счислимую точку)",
+        "g = 1 (смещение изолинии равно приращению дистанции)"]
+        .concat(isFinite(md) ? [] : ["m_{D} = k · D = " + App.f(k, Math.max(3, dec7(g("k")))) + " · " + f(D2, 1) + " = " + f(o.mU, 3) + " мили"])
+        .concat(["m_{лп} = m_{D} / g = " + f(o.mU, 3) + " / 1 = " + f(o.mU, 3) + " ≈ ± " + f(o.mU, 2) + " мили"]);
+      o.dirLP = deg7(o.tau + 90);
+    } else {
+      var A = az7(g("A")), hi = hm7(g("hi")), hc = hm7(g("hc")), dn3 = n7(g("dn")), mh = n7(g("m"));
+      if (!A) return String(g("A") || "").trim() ? (o.warn.push(L.name + ": не удалось прочитать азимут Ac."), o) : null;
+      if (!(mh >= 0)) { o.warn.push(L.name + ": нужна m_h."); return o; }
+      if (isFinite(hi) && isFinite(hc)) { o.dn = Math.round((hi - hc) * 10) / 10; o.hiHc = [hi, hc]; }
+      else if (isFinite(dn3)) o.dn = dn3; else { o.warn.push(L.name + ": нужны hи и hс или сразу Δn."); return o; }
+      o.tau = A.v; o.g = 1; o.mU = mh; o.dmU = Math.max(2, dec7(g("m")));
+      o.src = "Ac = " + (A.raw || f(A.v, 1) + "°") + (o.hiHc ? "; h_{и} = " + dmI(Math.round(hi * 10), 1) + "; h_{с} = " + dmI(Math.round(hc * 10), 1) : "") + "; m_{h} = ± " + App.f(mh, o.dmU) + "′";
+      o.mUs = "m_{h} = ± " + App.f(mh, o.dmU) + "′";
+      o.lines = ["τ = Ac (в круговом счёте) = " + (A.raw ? A.raw + " → " + A.how : "") + f(A.v, 1) + "°",
+        "g = 1 (смещение высотной линии равно изменению высоты: 1′ = 1 миля)"]
+        .concat(o.hiHc ? ["Δn = h_{и} − h_{с} = " + dmI(Math.round(hi * 10), 1) + " − " + dmI(Math.round(hc * 10), 1) + " = " + sg7(o.dn, 1) + "′ = " + sg7(o.dn, 1) + " мили"] : [])
+        .concat(["m_{лп} = m_{h} / g = " + App.f(mh, o.dmU) + " / 1 = ± " + App.f(mh, o.dmU) + " мили"]);
+      o.dirLP = deg7(o.tau + 90);
+    }
+    o.mlp = o.mU / o.g; o.a = Math.cos(o.tau * R); o.b = Math.sin(o.tau * R);
+    o.Kphi = o.dn * o.a; o.Kw = o.dn * o.b;
+    o.lines.push("Направление линии положения (перпендикулярно градиенту): τ ± 90° = " + f(deg7(o.tau + 90), 1) + "° / " + f(deg7(o.tau - 90), 1) + "°");
+    o.lines.push("Смещение Δn = " + sg7(o.dn, 1) + " мили — " + (o.dn > 0 ? "по направлению градиента" : o.dn < 0 ? "против направления градиента" : "линия положения проходит через счислимую точку"));
+    o.eq = f(o.a, 3) + " · Δφ " + (o.b < 0 ? "− " : "+ ") + App.f(Math.abs(o.b), 3) + " · Δw = " + sg7(o.dn, 1);
+    o.lines.push("Уравнение ЛП (13.5): cos τ · Δφ + sin τ · Δw = Δn → " + o.eq);
+    o.lines.push("Определяющая точка K (основание перпендикуляра из С на ЛП): Δφ_{K} = Δn · cos τ = " + sg7(o.Kphi, 2) + "′, Δw_{K} = Δn · sin τ = " + sg7(o.Kw, 2) + "′");
+    return o;
+  }
+  /* --- чертёж одной или всех ЛП, истинный масштаб 1 см = 1 миля (при большом Δn — 1 см = 2 мили) --- */
+  function rm7(items, single) { return Math.max(3.5, Math.max.apply(null, items.map(function (o) { return Math.abs(o.dn) + (single ? 2 : 1.8); }))); }
+  function cm7(items, single) { var Rm = rm7(items, single); return 2 * Rm * (2 * Rm <= 16.5 ? 1 : 0.5); }
+  function plot7(cv, items, single) {
+    var Rm = rm7(items, single);
+    var cmPerMile = 2 * Rm <= 16.5 ? 1 : 0.5, PX = 80, W = Math.round(2 * Rm * PX), H = W, c = cvInit(cv, W, H), cx = W / 2, cy = H / 2, R = Math.PI / 180;
+    cv._cm = 2 * Rm * cmPerMile;
+    function S(e, n) { return [cx + e * PX, cy - n * PX]; }
+    function put(s, p, o) {                     /* подпись, удержанная внутри листа */
+      var sz = o.size || 26, hw = String(s).replace(/_\{|\}/g, "").length * sz * 0.27 + 8, al = o.align || "center";
+      var x = al === "center" ? Math.min(Math.max(p[0], hw), W - hw) : al === "left" ? Math.min(Math.max(p[0], 8), W - 2 * hw) : Math.max(Math.min(p[0], W - 8), 2 * hw);
+      tx(c, s, x, Math.min(Math.max(p[1], sz * 0.7), H - sz * 0.7), o);
+    }
+    function inside(p, mg) { return p[0] > mg && p[0] < W - mg && p[1] > mg && p[1] < H - mg; }
+    for (var i = -Math.floor(Rm); i <= Math.floor(Rm); i++) { var a = S(i, -Rm), b = S(i, Rm); ln(c, [a, b], i === 0 ? 1.4 : 1, i === 0 ? "#bdbdbd" : "#e6e6e6"); a = S(-Rm, i); b = S(Rm, i); ln(c, [a, b], i === 0 ? 1.4 : 1, i === 0 ? "#bdbdbd" : "#e6e6e6"); }
+    var nA = S(-Rm + 0.55, Rm - 1.5), nB = S(-Rm + 0.55, Rm - 0.45); ln(c, [nA, nB], 2.4, "#111"); head(c, nB[0], nB[1], -Math.PI / 2, 18); tx(c, "N", nB[0] + 20, nB[1] + 6, { size: 26, bold: true, align: "left" });
+    var used7 = [];
+    items.forEach(function (o, idx) {
+      var u = [Math.sin(o.tau * R), Math.cos(o.tau * R)], v = [Math.cos(o.tau * R), -Math.sin(o.tau * R)];
+      var K = [o.dn * u[0], o.dn * u[1]], L = Rm * 1.6, lab = single ? "" : String(idx + 1);
+      function P(t, s) { return S(K[0] + v[0] * t + u[0] * s, K[1] + v[1] * t + u[1] * s); }
+      function endP(sg, off, mg) { for (var t = Rm * 1.5; t >= 0; t -= 0.05) { var p = P(sg * t, off); if (inside(p, mg)) return p; } return P(0, off); }
+      /* полоса ± m_лп */
+      var m = o.mlp, q = [P(-L, -m), P(L, -m), P(L, m), P(-L, m)];
+      c.fillStyle = single ? "rgba(0,0,0,0.10)" : "rgba(0,0,0,0.045)"; c.beginPath(); q.forEach(function (p, j) { if (j) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); }); c.closePath(); c.fill();
+      ln(c, [P(-L, m), P(L, m)], single ? 1.4 : 1, single ? "#555" : "#999", [9, 7]); ln(c, [P(-L, -m), P(L, -m)], single ? 1.4 : 1, single ? "#555" : "#999", [9, 7]);
+      ln(c, [P(-L, 0), P(L, 0)], single ? 4 : 3, "#111");                                    /* линия положения */
+      /* ось градиента с делениями через 1 милю (одиночный чертёж) или стрелка С → K (общий) */
+      if (single) {
+        var e1 = S(-u[0] * (Rm - 0.6), -u[1] * (Rm - 0.6)), e2 = S(u[0] * (Rm - 0.6), u[1] * (Rm - 0.6));
+        ln(c, [e1, e2], 1.6, "#333"); head(c, e2[0], e2[1], Math.atan2(e2[1] - e1[1], e2[0] - e1[0]), 20, "#333");
+        for (var t = -Math.floor(Rm - 0.9); t <= Math.floor(Rm - 0.9); t++) { if (!t) continue;
+          var p0 = S(u[0] * t - v[0] * 0.09, u[1] * t - v[1] * 0.09), p1 = S(u[0] * t + v[0] * 0.09, u[1] * t + v[1] * 0.09); ln(c, [p0, p1], 1.6, "#333");
+          var pl = S(u[0] * t - v[0] * 0.3, u[1] * t - v[1] * 0.3); tx(c, (t > 0 ? "+" : "−") + Math.abs(t), pl[0], pl[1], { size: 18, color: "#555" }); }
+        put("τ = " + f(o.tau, 1) + "°", S(u[0] * (Rm - 0.75) + v[0] * 0.6, u[1] * (Rm - 0.75) + v[1] * 0.6), { size: 24, italic: true });
+      }
+      if (Math.abs(o.dn) > 0.05) {
+        var C0 = S(0, 0), K0 = S(K[0], K[1]); ln(c, [C0, K0], single ? 5 : 3, "#111"); head(c, K0[0], K0[1], Math.atan2(K0[1] - C0[1], K0[0] - C0[0]), single ? 26 : 18);
+      }
+      var Kp = S(K[0], K[1]); dot(c, Kp[0], Kp[1], single ? 7 : 5);
+      if (single) {
+        put("Δn = " + sg7(o.dn, 1), S(K[0] / 2 + v[0] * 0.62, K[1] / 2 + v[1] * 0.62), { size: 24, italic: true, bold: true });
+        if (Math.abs(o.dn) > 0.6) put("K", S(K[0] - v[0] * 0.4 - u[0] * 0.38 * Math.sign(o.dn), K[1] - v[1] * 0.4 - u[1] * 0.38 * Math.sign(o.dn)), { size: 26, italic: true, bold: true });
+        put("ЛП", endP(1, m + 0.4, 34), { size: 26, bold: true });
+        put("± m_{лп} = " + f(o.mlp, 2), endP(-1, -(m + 0.38), 120), { size: 21, italic: true, color: "#333" });
+      } else {
+        var pA = endP(idx % 2 ? -1 : 1, 0.3, 30), pB = endP(idx % 2 ? 1 : -1, 0.3, 30), far = function (p) { return used7.every(function (q) { return Math.hypot(p[0] - q[0], p[1] - q[1]) > 60; }); };
+        var pL = far(pA) ? pA : far(pB) ? pB : pA; used7.push(pL); put(lab, pL, { size: 28, bold: true });
+        if (Math.abs(o.dn) > 0.6) put("K_{" + lab + "}", S(K[0] - v[0] * 0.3 + u[0] * 0.28 * Math.sign(o.dn), K[1] - v[1] * 0.3 + u[1] * 0.28 * Math.sign(o.dn)), { size: 20, italic: true });
+      }
+    });
+    var C0 = S(0, 0); ln(c, [[C0[0] - 16, C0[1]], [C0[0] + 16, C0[1]]], 3.4, "#111"); ln(c, [[C0[0], C0[1] - 16], [C0[0], C0[1] + 16]], 3.4, "#111");
+    var cl = items.length === 1 ? (function (o) { var u = [Math.sin(o.tau * R), Math.cos(o.tau * R)], v = [Math.cos(o.tau * R), -Math.sin(o.tau * R)]; return S(-u[0] * 0.45 - v[0] * 0.4, -u[1] * 0.45 - v[1] * 0.4); })(items[0]) : S(-0.38, -0.38);
+    tx(c, "С", cl[0], cl[1], { size: 28, italic: true, bold: true });
+    tx(c, "1 клетка = 1 миля" + (cmPerMile === 1 ? " (М 1 см — 1 миля)" : " (М 1 см — 2 мили)"), W - 14, H - 22, { size: 18, align: "right", color: "#555" });
+  }
+  var FIG7 = { all: { caption: "Прокладка всех линий положения от счислимой точки С", draw: function (cv, LK, d, r) { plot7(cv, r.items, false); } } };
+  LP7.forEach(function (L, i) { FIG7["l" + i] = { caption: "Линия положения: " + L.name.toLowerCase(), draw: function (cv, LK, d, r) { var o = r.items.filter(function (x) { return x.L === L; })[0]; if (o) plot7(cv, [o], true); else { cv.width = 10; cv.height = 10; } } }; });
+  var F7 = [{ title: "Номер задачи", fields: [["code", "Номер задачи"]] },
+    { title: "1. Пеленг — 1", fields: [["p1_P", "П, °"], ["p1_D", "D до ориентира, мили"], ["p1_m", "m_П, °"], ["p1_dn", "Δn, мили"]] },
+    { title: "2. Дистанция", fields: [["d_D", "D, мили"], ["d_P", "П на ориентир, °"], ["d_k", "k (m_D = k·D)"], ["d_m", "или сразу m_D, мили", { ph: "пусто — по k" }], ["d_dn", "Δn, мили"]] },
+    { title: "3. Высота светила — 1", fields: [["h1_A", "Ac (22,9 NE / N 120,5 E / 309,4)"], ["h1_hi", "hи (38°01,5′)", { ph: "или Δn" }], ["h1_hc", "hс", { ph: "или Δn" }], ["h1_dn", "Δn, мили (если нет hи, hс)"], ["h1_m", "m_h, ′"]] },
+    { title: "4. Пеленг — 2", fields: [["p2_P", "П, °"], ["p2_D", "D до ориентира, мили"], ["p2_m", "m_П, °"], ["p2_dn", "Δn, мили"]] },
+    { title: "5. Высота светила — 2", fields: [["h2_A", "Ac"], ["h2_hi", "hи", { ph: "или Δn" }], ["h2_hc", "hс", { ph: "или Δn" }], ["h2_dn", "Δn, мили (если нет hи, hс)"], ["h2_m", "m_h, ′"]] }];
+  App.taskWork(Object.assign({}, base, {
+    id: "mos-lr7", order: 7, key: "mos-lr7", file: "МОС_ЛР7_Линии_положения", no: "ЛР 7", short: "ЛР №7",
+    eyebrow: "МОС · Лабораторная работа №7", title: "Расчёт элементов линий положения", titleTopic: "Расчёт элементов линий положения",
+    desc: "Пять линий положения (пеленг, дистанция, высоты светил): направление и модуль градиента, смещение Δn, СКП линии положения, уравнение ЛП, прокладка каждой ЛП и всех вместе в масштабе 1 см — 1 миля.",
+    variants: 1, summary: false, varText: function (d) { return "Задача № " + (String(d.code || "").trim() || "—"); },
+    variantData: function () { return Object.assign({ variant: "1" }, DEF7); },
+    hint: "Исходные данные по линиям положения (по умолчанию — задача 16921). Пустая линия в расчёт не входит. Азимут светила можно вписать в четвертном (22,9 NE), полукруговом (N 120,5 E) или круговом (309,4) счёте; для высоты — hи и hс или сразу Δn.",
+    sections: F7, figs: FIG7,
+    solve: function (d) {
+      var st = [], warn = [], items = [], no = 1;
+      LP7.forEach(function (L) { var o = solve7line(d, L); if (!o) return; if (o.warn.length) { warn = warn.concat(o.warn); return; } items.push(o); });
+      if (!items.length) return { steps: [], warn: warn.length ? warn : ["Заполните хотя бы одну линию положения."] };
+      st.push({ no: no++, noLabel: "", title: "Исходные данные (задача № " + (String(d.code || "").trim() || "—") + ")", lines: [], tables: [{ headers: ["№", "Линия положения", "Исходные данные", "Δn, мили"], rows: items.map(function (o, i) { return [String(i + 1), o.L.name, o.src, sg7(o.dn, 1)]; }) }] });
+      items.forEach(function (o, i) {
+        st.push({ no: no++, noLabel: (i + 1) + ") ", title: o.L.name, lines: o.lines, figs: ["l" + LP7.indexOf(o.L)], answer: "τ = " + f(o.tau, 1) + "°; g = " + (o.L.kind === "brg" ? f(o.g, 3) + " °/милю" : "1") + "; Δn = " + sg7(o.dn, 1) + " мили; m_{лп} = ± " + f(o.mlp, 2) + " мили" });
+      });
+      st.push({ no: no++, noLabel: "", title: "Сводная таблица элементов линий положения", figs: ["all"], lines: [], tables: [{ headers: ["№", "ЛП", "τ", "g", "Δn, мили", "m_{лп}, мили", "Направление ЛП", "a = cos τ", "b = sin τ"],
+        rows: items.map(function (o, i) { return [String(i + 1), o.L.name, f(o.tau, 1) + "°", o.L.kind === "brg" ? f(o.g, 3) + " °/милю" : "1", sg7(o.dn, 1), "± " + f(o.mlp, 2), f(deg7(o.tau + 90), 1) + "° / " + f(deg7(o.tau - 90), 1) + "°", f(o.a, 3), f(o.b, 3)]; }) }] });
+      var best = items.reduce(function (a, b) { return b.mlp < a.mlp ? b : a; }), worst = items.reduce(function (a, b) { return b.mlp > a.mlp ? b : a; });
+      st[st.length - 1].paras = ["Самая точная линия положения — «" + best.L.name + "» (m_{лп} = ± " + f(best.mlp, 2) + " мили), наименее точная — «" + worst.L.name + "» (± " + f(worst.mlp, 2) + " мили). Для пеленга СКП линии положения растёт с расстоянием до ориентира (m_{лп} = m_{П} · D / 57,3), для дистанции — пропорциональна D (m_{D} = k·D), для высотной линии равна СКП высоты."];
+      var cm = { all: cm7(items, false) }; items.forEach(function (o) { cm["l" + LP7.indexOf(o.L)] = cm7([o], true); });
+      return { steps: st, warn: warn, items: items, code: String(d.code || "").trim(), cm: cm };
+    },
+    report: function (D, d, r, img) {
+      if (!r.items) { D.text("Нет данных."); return; }
+      var IL = function (t) { italicLine(D, t, 0.8); };
+      if (D.hasTitle) D.para("Решение задачи № " + (r.code || "—"), { bold: true, align: "center", size: 14, after: 6 });
+      D.text("Цель работы: по исходным данным вычислить элементы линий положения — направление τ и модуль g градиента навигационного параметра, смещение линии положения Δn и её среднюю квадратическую погрешность m_{лп}; выполнить прокладку линий положения относительно счислимой точки в масштабе 1 см — 1 миля.");
+      D.para("Рабочие формулы (учебник, гл. 12–14):", { before: 4, after: 2 });
+      ["пеленг на ориентир: τ = П − 90°;  g = 57,3 / D (°/милю);", "дистанция до ориентира: τ = П ± 180°;  g = 1;  m_{D} = k · D;", "высота светила: τ = Ac (круговой счёт);  g = 1;  Δn = h_{и} − h_{с};",
+        "СКП линии положения: m_{лп} = m_{U} / g;   уравнение ЛП: cos τ · Δφ + sin τ · Δw = Δn."].forEach(IL);
+      D.para("Исходные данные:", { before: 4, after: 2, keep: true });
+      D.table(r.steps[0].tables[0].headers, r.steps[0].tables[0].rows, { widths: [0.8, 3.6, 10, 2], size: 10, lefts: [1, 2] });
+      r.items.forEach(function (o, i) {
+        D.pageBreak();
+        D.para([{ t: (i + 1) + ") ", bold: true }, o.L.name], { after: 1, keep: true });
+        o.lines.forEach(IL);
+        D.para([{ t: "Ответ: ", bold: true }, "τ = " + f(o.tau, 1) + "°; g = " + (o.L.kind === "brg" ? f(o.g, 3) + " °/милю" : "1") + "; Δn = " + sg7(o.dn, 1) + " мили; m_{лп} = ± " + f(o.mlp, 2) + " мили."], { left: 0.8, after: 2, keep: true });
+        D.para("Прокладка линии положения (от С по направлению градиента τ отложено Δn, через точку K перпендикулярно градиенту — ЛП, полоса ± m_{лп}):", { size: 11, after: 2, keep: true });
+        img("l" + LP7.indexOf(o.L), r.cm["l" + LP7.indexOf(o.L)]);
+      });
+      var sm = r.steps[r.steps.length - 1];
+      D.pageBreak();
+      D.para([{ t: "Сводная таблица элементов линий положения", bold: true }], { after: 2, keep: true });
+      D.table(sm.tables[0].headers, sm.tables[0].rows, { widths: [0.7, 3.2, 1.5, 2.2, 1.6, 1.8, 2.7, 1.5, 1.5], size: 9.5, lefts: [1] });
+      D.para([{ t: "Уравнения линий положения", bold: true }, " (Δφ и Δw — в угловых минутах, Δn — в милях):"], { before: 6, after: 2, keep: true });
+      r.items.forEach(function (o, i) { IL((i + 1) + ") " + o.L.name + ": " + o.eq); });
+      D.text(sm.paras[0]);
+      D.para("Прокладка всех линий положения от счислимой точки С (номера — как в таблице):", { before: 6, after: 2, size: 11, keep: true });
+      img("all", r.cm.all);
+    }
+  }));
 })();
 
 /* ======================================================================
