@@ -3977,6 +3977,8 @@ var LR1Engine = (function () {
     drawLegend(c, legendItems(C, r, true, false), W, 60, 24);
   }
 
+  /* ядро расчёта — для ЛР № 4 вкладки «Конаков» (ящики с планками) */
+  window.TMP_KUK = { solve: solve, drawPlan: drawPlan, drawSide: drawSide, drawIso: drawIso, VARS: VARS, MODES: MODES, MODE_NAME: MODE_NAME, fx: fx };
   App.taskWork({
     disc: "tomg", discName: "Технология и организация морской перевозки грузов", id: "tomg-lr2k", order: 2, key: "tomg-lr2k",
     file: "ТМПГ_ЛР2_Коэффициент_укладки", no: "ЛР 2", short: "ЛР №2",
@@ -5284,6 +5286,179 @@ var LR1Engine = (function () {
     ],
     figs: { plan: { caption: "Грузовой план судна т/х «Валерий Волков»", draw: drawPlan3 } },
     solve: solve3, report: report3
+  });
+
+  /* ======================================================================
+     ЛР № 4 «Расчёт коэффициента укладки груза и удельного погрузочного объёма»
+     (методичка 2016, с. 17–18). Ящики 100 × 60 × 50 см, 50 кг, с планкой по периметру
+     0,05 м (→ коэффициент формы), «не кантовать», доски 2,5 см через три яруса,
+     варианты L × B × H 1–27 (в таблице методички № 14 пропущен — по ряду 6,0 × 5,4 × 5,2).
+     Расчёт штабеля — ядро ЛР 2 вкладки «Доброквашин» (TMP_KUK) по габаритам места с планками.
+     П. 3 — эффективная загрузка трюмов № 1–4 т/х «Валерий Волков» грузом табл. 1.4 ЛР № 3.
+     ====================================================================== */
+  var CARGO4 = [null,
+    ["Сахар в мешках", "1,27", 1200], ["Мука в мешках", "1,42–1,56", 1800], ["Рис в мешках", "1,41–1,47", 1650], ["Консервы мясные в коробках", "1,25", 2000],
+    ["Консервы мясные в коробках", "1,27–1,32", 1980], ["Цемент в мешках", "1,05–1,20", 2500], ["Стиральный порошок в коробках", "1,8–2,6", 300], ["Гвозди в ящиках", "0,25–0,5", 600],
+    ["Мыло хозяйственное в коробках", "0,98–1,12", 460], ["Фанера листовая в пакетах", "1,8", 2050], ["Краска нитроэмаль в ящиках", "1,32–1,57", 250], ["Текстиль в тюках", "3,0–5,0", 700],
+    ["Легковые автомобили", "", NaN], ["Тяжёлая техника (а/м, бульдозеры)", "", NaN], ["Пиломатериал", "2,1–2,4", 2000]];
+  function muMid(s) { var p = String(s || "").split(/[–-]/).map(num).filter(isFinite); return p.length ? (p[0] + p[p.length - 1]) / 2 : NaN; }
+  function cgOf(v) { v = +v || 1; return v <= 15 ? v : v - 15; }
+  function data4(v) { return { variant: String(v || 1), plank: "5", pk: "lb", lc: "100", bc: "60", hc: "50", q: "50", bt: "2,5", bk: "3", mode: "best", cg: String(cgOf(v)), mu: "", Q: "", dist: "prop" }; }
+  function var4(v) { var x = window.TMP_KUK ? TMP_KUK.VARS[+v] : null; return x || [6, 5, 5.2]; }
+  function g4(x) { return !isFinite(x) ? "–" : window.TMP_KUK ? TMP_KUK.fx(x, 3, 1) : String(Math.round(x * 1000) / 1000).replace(".", ","); }
+  function solve4(d) {
+    if (!window.TMP_KUK) return { steps: [], warn: ["Не найден расчёт штабеля (модуль ЛР 2)."] };
+    var K = TMP_KUK, x = var4(d.variant), dp = n3(d.plank, 5), l = n3(d.lc, 100), b = n3(d.bc, 60), h = n3(d.hc, 50);
+    var lg = l + 2 * dp, bg = b + 2 * dp, hg = d.pk === "lbh" ? h + 2 * dp : h;
+    var d2 = { variant: d.variant, L: String(x[0]).replace(".", ","), B: String(x[1]).replace(".", ","), H: String(x[2]).replace(".", ","), hold: "1", lc: String(lg), bc: String(bg), hc: String(hg), q: d.q, bt: d.bt, bk: d.bk, mode: d.mode, qa: "0" };
+    var r2 = K.solve(d2), warn = (r2.warn || []).slice(), st = [];
+    if (!r2.R) return { steps: [], warn: warn, d2: d2, r2: r2 };
+    var Vb = l * b * h / 1e6, Vg = lg * bg * hg / 1e6, Kf = Vb / Vg, qm = n3(d.q, 50) / 1000;
+    var bump = function (s) { return typeof s === "string" ? s.replace(/рис\. (\d)/g, function (m0, n) { return "рис. " + (+n + 1); }) : s; };
+    r2.steps.forEach(function (s) {
+      if (s.kind === "qa") return;
+      var c = Object.assign({}, s);
+      ["paras", "after", "lines"].forEach(function (k) { if (c[k]) c[k] = c[k].map(bump); });
+      if (c.no === "2.2") {
+        c = { no: "2.2", noLabel: "2.2. ", title: "Габаритный объём места, коэффициент формы и удельный объём места",
+          paras: ["Ящик " + g4(l / 100) + " × " + g4(b / 100) + " × " + g4(h / 100) + " м имеет планку по периметру толщиной δ_{п} = " + g4(dp / 100) + " м, поэтому габаритные (наибольшие) размеры места больше размеров самого ящика (рис. 1): l_{м} = " + g4(l / 100) + " + 2 · " + g4(dp / 100) + " = " + g4(lg / 100) + " м, b_{м} = " + g4(b / 100) + " + 2 · " + g4(dp / 100) + " = " + g4(bg / 100) + " м, h_{м} = " + g4(hg / 100) + " м. Ящики в штабеле укладываются по габаритным размерам — планка к планке.",
+            "Коэффициент формы — отношение фактического объёма места к его габаритному объёму («ТМП», с. 15)."],
+          lines: ["V_{м} = l_{м} · b_{м} · h_{м} = " + g4(lg / 100) + " · " + g4(bg / 100) + " · " + g4(hg / 100) + " = " + g4(Vg) + " м³   (1.4)",
+            "V_{ф} = l · b · h = " + g4(l / 100) + " · " + g4(b / 100) + " · " + g4(h / 100) + " = " + g4(Vb) + " м³",
+            "K_{ф} = V_{ф} / V_{м} = " + g4(Vb) + " / " + g4(Vg) + " = " + f(Kf, 3) + ";   V_{ф} = K_{ф} · V_{м}   (1.5)",
+            "u_{м} = V_{м} / q_{м} = " + g4(Vg) + " / " + g4(qm) + " = " + f(Vg / qm, 2) + " м³/т"],
+          figs: ["box"], answer: "K_{ф} = " + f(Kf, 3) + "; V_{м} = " + g4(Vg) + " м³; u_{м} = " + f(Vg / qm, 2) + " м³/т" };
+      }
+      st.push(c);
+    });
+    /* 3. эффективная загрузка трюмов */
+    var cg = Math.min(15, Math.max(1, parseInt(d.cg, 10) || 1)), C = CARGO4[cg], mu = isFinite(num(d.mu)) ? num(d.mu) : muMid(C[1]), Q = isFinite(num(d.Q)) ? num(d.Q) : C[2];
+    var muTxt = isFinite(num(d.mu)) ? "задан" : C[1] && /[–-]/.test(C[1]) ? "середина диапазона " + C[1] : "табл. 1.4";
+    var R3 = { cg: cg, C: C, mu: mu, Q: Q };
+    if (!isFinite(mu) || mu <= 0) warn.push("Для груза «" + C[0] + "» УПО в табл. 1.4 не задан («рассчитать согласно конкретной технике по заданию преподавателя») — впишите μ вручную.");
+    if (!isFinite(Q)) warn.push("Для груза «" + C[0] + "» масса партии в табл. 1.4 не задана — впишите её вручную.");
+    R3.H = HOLDS3.map(function (hh) {
+      var o = { h: hh, S: hh.L * hh.B }; o.Pv = hh.vp / mu; o.Pq = o.S * hh.q; o.Pd = Math.min(o.Pq, hh.P); o.Pe = Math.min(o.Pv, o.Pd); o.lim = o.Pv > o.Pd ? (o.Pq <= hh.P ? "q" : "P") : "V"; return o;
+    });
+    R3.sumPe = R3.H.reduce(function (s, o) { return s + o.Pe; }, 0);
+    var fitAll = Q <= R3.sumPe + 1e-9;
+    R3.H.forEach(function (o) { o.Pl = !isFinite(Q) ? NaN : fitAll ? (d.dist === "fill" ? 0 : Q * o.Pe / R3.sumPe) : o.Pe; });
+    if (fitAll && d.dist === "fill" && isFinite(Q)) { var rest = Q; R3.H.forEach(function (o) { o.Pl = Math.min(o.Pe, rest); rest -= o.Pl; }); }
+    R3.H.forEach(function (o) { o.Vl = o.Pl * mu; o.use = o.Vl / o.h.vp * 100; });
+    R3.left = isFinite(Q) ? Math.max(0, Q - R3.sumPe) : NaN;
+    var ex = R3.H[0];
+    var l3 = ["P_{гр} = V / μ;   P_{max} = S · q;   P_{эф} = min(P_{гр}; P_{max}; P_{наиб})"];
+    if (isFinite(mu)) l3.push("Трюм № 1: P_{гр} = " + ex.h.vp + " / " + f(mu, 3) + " = " + f(ex.Pv, 1) + " т;  P_{max} = S · q = " + f(ex.h.L, 0) + " · " + f(ex.h.B, 0) + " · " + f(ex.h.q, 1) + " = " + f(ex.Pq, 0) + " т;  P_{наиб} = " + ex.h.P + " т");
+    var limTxt = { V: "объём трюма", q: "прочность второго дна (S · q)", P: "наиб. равномерно распределённый груз (табл. 1.2)" };
+    st.push({ no: "3", noLabel: "3. ", title: "Эффективная загрузка трюмов № 1–4", kind: "holds",
+      paras: ["Груз — по табл. 1.4 ЛР № 3, № " + cg + (cg === +d.variant ? " (по № варианта)" : cg === cgOf(d.variant) ? " (вариант " + d.variant + " − 15)" : " (по указанию преподавателя)") + ": " + C[0].toLowerCase() + ", μ = " + f(mu, 3) + " м³/т (" + muTxt + "), масса партии Q = " + (isFinite(Q) ? f(Q, 0) + " т" : "—") + ". Судно — т/х «Валерий Волков» (табл. 1.1–1.3 ЛР № 3).",
+        "Как в примере методички: масса груза, которую вмещает трюм по объёму, P_{гр} = V / μ, где V — объём трюма для штучных грузов; затем загрузка проверяется по местной прочности: P_{max} = S · q, где S = l · b — площадь трюма, q — допустимая нагрузка на второе дно (табл. 1.3); дополнительно — наибольший равномерно распределённый груз P_{наиб} (табл. 1.2)."],
+      lines: l3,
+      tables: [{ title: "Таблица 3.1 — Эффективная загрузка трюмов грузом «" + C[0] + "»", headers: ["Трюм", "V, м³", "P_{гр} = V/μ, т", "S, м²", "P_{max} = S·q, т", "P_{наиб}, т", "P_{эф}, т", "Ограничивает"], widths: [1.3, 1.5, 2.1, 1.4, 2.2, 1.8, 1.8, 4.4],
+        rows: R3.H.map(function (o) { return ["№ " + o.h.no, String(o.h.vp), f(o.Pv, 1), f(o.S, 0), f(o.Pq, 0), String(o.h.P), f(o.Pe, 1), limTxt[o.lim]]; }).concat([Object.assign(["Σ", String(HOLDS3.reduce(function (s, hh) { return s + hh.vp; }, 0)), "", "", "", "", f(R3.sumPe, 1), ""], { bold: true })]), lefts: [7] },
+        { title: "Таблица 3.2 — Размещение партии Q = " + (isFinite(Q) ? f(Q, 0) : "—") + " т по трюмам", headers: ["Трюм", "P, т", "V = P · μ, м³", "Заполнение трюма, %", "P / P_{эф}, %"], widths: [2.0, 3.2, 3.6, 3.8, 3.9],
+          rows: R3.H.map(function (o) { return ["№ " + o.h.no, f(o.Pl, 1), f(o.Vl, 1), f(o.use, 1), f(o.Pe ? o.Pl / o.Pe * 100 : 0, 1)]; }).concat([Object.assign(["Σ", f(Q - (R3.left || 0), 1), f((Q - (R3.left || 0)) * mu, 1), f((Q - (R3.left || 0)) * mu / HOLDS3.reduce(function (s, hh) { return s + hh.vp; }, 0) * 100, 1), ""], { bold: true })]) }],
+      after: [isFinite(Q) ? (fitAll ? "Партия " + f(Q, 0) + " т размещается полностью: эффективная загрузка четырёх трюмов " + f(R3.sumPe, 1) + " т" + (d.dist === "fill" ? "; трюмы загружаются по порядку № 1 → № 4 до P_{эф}." : "; партия распределена пропорционально эффективной загрузке трюмов (одинаковая доля P / P_{эф} во всех трюмах).")
+        : "Вся партия не помещается: эффективная загрузка четырёх трюмов " + f(R3.sumPe, 1) + " т, остаётся " + f(R3.left, 1) + " т.") : ""],
+      answer: "ΣP_{эф} = " + f(R3.sumPe, 1) + " т" + (isFinite(Q) ? (fitAll ? "; партия " + f(Q, 0) + " т помещается" : "; не помещается " + f(R3.left, 1) + " т") : "") });
+    var R = r2.R;
+    var C4 = ["В свободное пространство " + g4(x[0]) + " × " + g4(x[1]) + " × " + g4(x[2]) + " м трюма № 1 укладывается " + R.N + " " + App.plural(R.N, "ящик", "ящика", "ящиков") + " с планками (габарит места " + g4(lg / 100) + " × " + g4(bg / 100) + " × " + g4(hg / 100) + " м) массой " + f(R.Q, 2) + " т.",
+      "Коэффициент формы ящика с планкой K_{ф} = " + f(Kf, 3) + ": планка увеличивает габаритный объём места на " + f((Vg / Vb - 1) * 100, 1) + " % по сравнению с объёмом самого ящика.",
+      "Коэффициент укладки K_{ук} = " + TMP_KUK.fx(R.Kuk, 3, 3) + ", трюмный коэффициент K_{тр} = " + TMP_KUK.fx(R.Ktr, 3, 3) + ", удельный погрузочный объём груза μ = " + TMP_KUK.fx(R.mu, 2, 2) + " м³/т (удельный объём места u_{м} = " + f(Vg / qm, 2) + " м³/т).",
+      "Эффективная загрузка трюмов № 1–4 грузом «" + C[0].toLowerCase() + "» (μ = " + f(mu, 3) + " м³/т) — " + f(R3.sumPe, 1) + " т; " + (isFinite(Q) ? (fitAll ? "партия " + f(Q, 0) + " т размещается полностью." : "из партии " + f(Q, 0) + " т не помещается " + f(R3.left, 1) + " т.") : "")];
+    st.push({ no: "В", noLabel: "", title: "Вывод", kind: "fin", lines: [], paras: C4 });
+    return { steps: st, warn: warn, d2: d2, r2: r2, R3: R3, Kf: Kf, dims: { l: l, b: b, h: h, lg: lg, bg: bg, hg: hg, dp: dp } };
+  }
+  function drawBox4(cv, LK, d, r) {
+    var W = 1600, H = 640, c = cvSet(cv, W, H); cv._cm = 14;
+    var D = r.dims, k9 = Math.min(4.6, 500 / Math.max(D.lg, 1)), ox = 200, oy = 110;
+    var X = function (cm) { return ox + cm * k9; }, Yv = function (cm) { return oy + cm * k9; };
+    var gL = D.lg, gB = D.bg, p = D.dp;
+    /* вид сверху */
+    c.fillStyle = "#c79a5c"; c.fillRect(X(0), Yv(0), X(gL) - X(0), Yv(gB) - Yv(0));
+    c.fillStyle = "#EED9B5"; c.fillRect(X(p), Yv(p), X(gL - p) - X(p), Yv(gB - p) - Yv(p));
+    c.lineWidth = 3.5; c.strokeStyle = "#1b1b1b"; c.strokeRect(X(0), Yv(0), X(gL) - X(0), Yv(gB) - Yv(0)); c.lineWidth = 2.5; c.strokeRect(X(p), Yv(p), X(gL - p) - X(p), Yv(gB - p) - Yv(p));
+    tx(c, "ящик " + g4(D.l / 100) + " × " + g4(D.b / 100) + " м", (X(0) + X(gL)) / 2, (Yv(0) + Yv(gB)) / 2 - 16, { size: 26, bold: true });
+    tx(c, "«не кантовать», " + g4(n3(d.q, 50)) + " кг", (X(0) + X(gL)) / 2, (Yv(0) + Yv(gB)) / 2 + 20, { size: 22 });
+    tx(c, "планка " + g4(p / 100) + " м", X(gL) + 20, Yv(p / 2), { size: 22, align: "left", color: "#6b4a1f" });
+    ln(c, [[X(gL) + 16, Yv(p / 2)], [X(gL - p / 2), Yv(p / 2)]], 1.5, "#6b4a1f");
+    /* размеры */
+    var yd = Yv(gB) + 50; ln(c, [[X(0), Yv(gB)], [X(0), yd + 12]], 1.4); ln(c, [[X(gL), Yv(gB)], [X(gL), yd + 12]], 1.4);
+    ln(c, [[X(0), yd], [X(gL), yd]], 2.2); arrowHead(c, X(gL), yd, 0, 16); arrowHead(c, X(0), yd, Math.PI, 16);
+    tx(c, "l_{м} = " + g4(gL / 100) + " м", (X(0) + X(gL)) / 2, yd + 30, { size: 26, italic: true });
+    var yd2 = Yv(gB) + 120; ln(c, [[X(p), Yv(gB - p)], [X(p), yd2 + 12]], 1.2, "#555", [6, 5]); ln(c, [[X(gL - p), Yv(gB - p)], [X(gL - p), yd2 + 12]], 1.2, "#555", [6, 5]);
+    ln(c, [[X(p), yd2], [X(gL - p), yd2]], 1.8, "#555"); arrowHead(c, X(gL - p), yd2, 0, 14, "#555"); arrowHead(c, X(p), yd2, Math.PI, 14, "#555");
+    tx(c, "l = " + g4(D.l / 100) + " м", (X(0) + X(gL)) / 2, yd2 + 28, { size: 23, italic: true, color: "#444" });
+    var xd = X(0) - 50; ln(c, [[X(0), Yv(0)], [xd - 12, Yv(0)]], 1.4); ln(c, [[X(0), Yv(gB)], [xd - 12, Yv(gB)]], 1.4);
+    ln(c, [[xd, Yv(0)], [xd, Yv(gB)]], 2.2); arrowHead(c, xd, Yv(gB), Math.PI / 2, 16); arrowHead(c, xd, Yv(0), -Math.PI / 2, 16);
+    tx(c, "b_{м} = " + g4(gB / 100) + " м", xd - 20, (Yv(0) + Yv(gB)) / 2, { size: 26, italic: true, rot: -Math.PI / 2 });
+    /* вид сбоку */
+    var sx = X(gL) + 230, sy = Yv(0) + 30, hs = D.hg * k9, sw = gL * k9;
+    c.fillStyle = "#EED9B5"; c.fillRect(sx, sy, sw, hs); c.fillStyle = "#c79a5c"; c.fillRect(sx, sy, p * k9, hs); c.fillRect(sx + (gL - p) * k9, sy, p * k9, hs);
+    c.lineWidth = 3; c.strokeStyle = "#1b1b1b"; c.strokeRect(sx, sy, sw, hs); c.lineWidth = 2; c.strokeRect(sx + p * k9, sy, (gL - 2 * p) * k9, hs);
+    ln(c, [[sx + sw + 30, sy], [sx + sw + 30, sy + hs]], 2.2); arrowHead(c, sx + sw + 30, sy + hs, Math.PI / 2, 14); arrowHead(c, sx + sw + 30, sy, -Math.PI / 2, 14);
+    tx(c, "h_{м} = " + g4(D.hg / 100) + " м", sx + sw + 44, sy + hs / 2, { size: 24, italic: true, align: "left" });
+    tx(c, "вид сбоку", sx + sw / 2, sy - 30, { size: 24, bold: true });
+    tx(c, "вид сверху", (X(0) + X(gL)) / 2, Yv(0) - 36, { size: 24, bold: true });
+    tx(c, "K_{ф} = V_{ф} / V_{м} = " + g4(D.l * D.b * D.h / 1e6) + " / " + g4(gL * gB * D.hg / 1e6) + " = " + f(r.Kf, 3), sx + sw / 2, sy + hs + 110, { size: 28, bold: true });
+  }
+  function report4(D, d, r, img) {
+    if (!r.r2 || !r.r2.R) { (r.warn || []).forEach(function (w) { D.text(w); }); return; }
+    var G = r.r2.G, fig = 0, done = {};
+    var CAP = { box: "Грузовое место — ящик с планкой по периметру", plan: "Схема укладки ящиков по ярусам (вид сверху)", side: "Размещение ящиков по высоте: вид сбоку и вид с торца", iso: "Укладка ящиков в свободном пространстве трюма № 1 (аксонометрия)" };
+    function put(id) { if (done[id]) return; done[id] = 1; fig++; img(id, { box: 14, plan: 16.5, side: 16.5, iso: 14.5 }[id]); D.para("Рисунок " + fig + " — " + CAP[id], { align: "center", size: 10, after: 8 }); }
+    D.para([{ t: "Цель работы: ", bold: true }, "изучение расчёта грузового плана судна с учётом физических свойств грузов."], { align: "just", indent: D.t.indent, after: 6 });
+    D.head("Исходные данные", { size: 13 });
+    D.text("В трюме № 1 имеется свободное от других грузов пространство L × B × H = " + g4(G.L / 1000) + " × " + g4(G.B / 1000) + " × " + g4(G.H / 1000) + " м (вариант " + d.variant + (+d.variant === 14 ? "; в таблице вариантов методички № 14 пропущен, размеры приняты по ряду" : "") + "), в которое следует разместить грузовые места — ящики с планкой по периметру " + g4(r.dims.dp / 100) + " м, размерами " + g4(r.dims.l) + " × " + g4(r.dims.b) + " × " + g4(r.dims.h) + " см и массой " + g4(n3(d.q, 50)) + " кг. Через каждые " + (d.bk || 3) + " яруса по высоте прокладываются доски толщиной " + g4(n3(d.bt, 2.5)) + " см, свободные пространства заполняются прокладочным материалом (доски или деннажные подушки). На ящики нанесён знак «не кантовать».");
+    r.steps.forEach(function (s) {
+      if (s.kind === "fin") return;
+      if (s.kind === "compat") D.head("1. Классификация грузов по условиям совместимости", { size: 13 });
+      else if (s.kind === "holds") D.head("3. Эффективная загрузка трюмов № 1–4", { size: 13 });
+      else { if (s.no === "2.1") D.head("2. Коэффициент укладки, трюмный коэффициент и удельный погрузочный объём", { size: 13 }); D.sub(s.noLabel + s.title); }
+      (s.paras || []).forEach(function (t) { D.text(t); });
+      s.lines.forEach(function (l) { if (/^Трюм №/.test(l)) D.text(l, { after: 3 }); else D.formula(l); });
+      (s.tables || []).forEach(function (tb) { if (tb.title) D.para(tb.title, { size: 11, after: 2, keep: true }); D.table(tb.headers, tb.rows, { widths: tb.widths, size: tb.headers.length > 6 ? 9 : 10, lefts: tb.lefts }); });
+      (s.after || []).forEach(function (t) { D.text(t); });
+      (s.figs || []).forEach(put);
+    });
+    D.head("Сводная таблица результатов", { size: 13 });
+    var sm = r.r2.summary.map(function (row) { return row.slice(); });
+    sm.splice(2, 0, ["Коэффициент формы", "K_{ф} = V_{ф} / V_{м}", f(r.Kf, 3), "—"]);
+    D.para("Таблица 2.3 — Результаты расчёта", { size: 11, after: 2, keep: true });
+    D.table(["Величина", "Формула", "Значение", "Ед."], sm, { widths: [5.6, 6.2, 2.7, 2.0], size: 10, lefts: [0, 1] });
+    var fin0 = r.steps.filter(function (s) { return s.kind === "fin"; })[0];
+    D.head("Выводы", { size: 13 });
+    (fin0 ? fin0.paras : []).forEach(function (t) { D.text(t); });
+  }
+  App.taskWork({
+    disc: "tomg", sec: "kon", tkey: "tomg-kon", discName: "Технология и организация морской перевозки грузов", id: "tomg-k4", order: 4, key: "tomg-k4",
+    file: "ТМПГ_Конаков_ЛР4_Коэффициент_укладки", no: "ЛР 4", short: "ЛР №4",
+    eyebrow: "ТОМПГ · Конаков · Лабораторная работа №4", title: "Расчёт коэффициента укладки груза и удельного погрузочного объёма",
+    titleTopic: "Расчёт коэффициента укладки груза и удельного погрузочного объёма", titleKind: "Лабораторная работа",
+    desc: "Ящики 100×60×50 см с планкой по периметру 0,05 м (коэффициент формы) в свободном пространстве трюма № 1 (варианты 1–27): ярусы, доски, Kук, Kтр, μ, схемы; эффективная загрузка трюмов № 1–4 грузом табл. 1.4 ЛР № 3.",
+    variants: (function () { var a = []; for (var v = 1; v <= 27; v++) a.push(v); return a; })(), variantLabel: "Вариант (№ по списку)", defaultVariant: 1,
+    variantName: function (v) { var x = var4(v); return v + " — " + g4(x[0]) + " × " + g4(x[1]) + " × " + g4(x[2]) + " м" + (+v === 14 ? " (нет в таблице, по ряду)" : ""); },
+    keep: ["plank", "pk", "lc", "bc", "hc", "q", "bt", "bk", "mode", "dist"], variantData: data4, summary: false,
+    varText: function (d) { var x = var4(d.variant); return "Вариант " + d.variant + ": L × B × H = " + g4(x[0]) + " × " + g4(x[1]) + " × " + g4(x[2]) + " м"; },
+    hint: "Методичка «Технология перевозки грузов морем», лабораторные работы, ч. I (2016), ЛР № 4, с. 17–18. Ящики с планкой по периметру 0,05 м: габарит места 1,1 × 0,7 × 0,5 м, отсюда коэффициент формы. Формулы — «ТМП», 3-е изд., с. 15–17. Пункт 3 — груз из табл. 1.4 ЛР № 3 «по своему варианту»; преподаватель может указать другой груз.",
+    sections: [
+      { title: "Грузовое место", note: "По методичке: ящик 100 × 60 × 50 см, 50 кг, планка по периметру 0,05 м, «не кантовать»; доски 2,5 см через каждые три яруса.", fields: [
+        ["lc", "Длина ящика", { num: true, unit: "см" }], ["bc", "Ширина ящика", { num: true, unit: "см" }], ["hc", "Высота ящика", { num: true, unit: "см" }], ["q", "Масса ящика", { num: true, unit: "кг" }],
+        ["plank", "Толщина планки", { num: true, unit: "см" }], ["pk", "Планка увеличивает", { select: [["lb", "длину и ширину (по периметру в плане)"], ["lbh", "длину, ширину и высоту"]], wide: true }],
+        ["bt", "Толщина досок", { num: true, unit: "см" }], ["bk", "Доски через, ярусов", { num: true }]] },
+      { title: "Схема укладки", fields: [["mode", "Схема укладки в ярусе", { select: (window.TMP_KUK ? TMP_KUK.MODES : [["best", "наилучшая"]]), wide: true }]] },
+      { title: "П. 3 — эффективная загрузка трюмов № 1–4", note: "Груз — по табл. 1.4 ЛР № 3; по умолчанию № груза = № варианта (для вариантов 16–27 — № варианта − 15). УПО, заданный диапазоном, берётся по середине; можно вписать своё значение.", fields: [
+        ["cg", "Груз (табл. 1.4)", { select: CARGO4.slice(1).map(function (c, i) { return [String(i + 1), (i + 1) + ". " + c[0] + (c[1] ? " — " + c[1] + " м³/т" : "") + (isFinite(c[2]) ? ", " + c[2] + " т" : "")]; }), wide: true }],
+        ["mu", "μ, м³/т (пусто — по табл. 1.4)", { num: true }], ["Q", "Масса партии, т (пусто — по табл. 1.4)", { num: true }],
+        ["dist", "Партия по трюмам", { select: [["prop", "пропорционально эффективной загрузке"], ["fill", "по порядку № 1 → № 4"]], wide: true }]] }
+    ],
+    figs: {
+      box: { caption: "Грузовое место — ящик с планкой по периметру", draw: drawBox4 },
+      plan: { caption: "Схема укладки ящиков по ярусам (вид сверху)", draw: function (cv, LK, d, r) { TMP_KUK.drawPlan(cv, LK, r.d2, r.r2); } },
+      side: { caption: "Размещение ящиков по высоте: вид сбоку и вид с торца", draw: function (cv, LK, d, r) { TMP_KUK.drawSide(cv, LK, r.d2, r.r2); } },
+      iso: { caption: "Укладка ящиков в свободном пространстве трюма № 1 (аксонометрия)", draw: function (cv, LK, d, r) { TMP_KUK.drawIso(cv, LK, r.d2, r.r2); } }
+    },
+    solve: solve4, report: report4
   });
 })();
 
