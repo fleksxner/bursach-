@@ -4654,11 +4654,41 @@ var LR1Engine = (function () {
      груз начинает смещаться. Ступени: исходный груз, затем вода до массы +5, +10 … +30 %
      от исходной. Определить относительную влажность, при которой угол минимален.
      В примере методички заполнено только начало: песок, 415 г, 17°.
+     Режим «расчёт по модели» (по формулам, которые прислал пользователь): угол на ступенях
+     увлажнения — из условия предельного равновесия влажного сыпучего груза с капиллярным
+     сцеплением: tg α = (c_cap + σ′·tg φ′)/σ, σ′ = σ(1 − r_u) → tg α = c_cap/σ + (1 − r_u)·tg φ′;
+     c_cap = k·2γ·cosθ/d·f(S_r), f(S_r) = (S_r/S_rm)·exp(1 − S_r/S_rm) (максимум при S_rm),
+     S_r = w·ρ_s/(ρ_w·e) ≤ 1; σ = ρ·g·h·cos α; r_u = r_max·((S_r − S_r1)/(1 − S_r1))², r_max = ρ_w/ρ_sat
+     (фильтрация вдоль откоса при полном водонасыщении). k и f(S_r) — эмпирические, по умолчанию
+     ориентировочные для песка; в отчёте углы помечены как расчётные.
      ====================================================================== */
   var STEPS = [0, 5, 10, 15, 20, 25, 30];
   function ex2() { return [{ n: "Песок", m0: "415", w0: "", a: ["17", "", "", "", "", "", ""], m: ["", "", "", "", "", "", ""] }]; }
   function blank2(i) { return { n: "Груз " + i, m0: "", w0: "", a: ["", "", "", "", "", "", ""], m: ["", "", "", "", "", "", ""] }; }
   function fg(x, n) { return isFinite(x) ? f(x, n === undefined ? 1 : n) : "–"; }
+  /* параметры расчётной модели: ключ, название, обозначение, ед., по умолчанию (песок), пояснение */
+  var PAR2 = [
+    ["phi", "Угол внутреннего трения сухого груза", "φ′", "°", "", "пусто — угол исходного груза из таблицы"],
+    ["rs", "Плотность частиц", "ρ_{s}", "кг/м³", "2650", "кварцевый песок"],
+    ["e", "Коэффициент пористости", "e", "", "0,75", "рыхлая насыпь песка 0,7–0,8"],
+    ["dd", "Характерный диаметр частиц", "d", "мм", "0,3", "песок средней крупности 0,25–0,5 мм"],
+    ["k", "Коэффициент структуры (эмпирический)", "k", "", "0,1", "зависит от упаковки зёрен"],
+    ["srm", "Водонасыщение при максимуме сцепления", "S_{rm}", "%", "15", "для песка 12–18 %"],
+    ["sr1", "Водонасыщение начала порового давления", "S_{r1}", "%", "70", "поры почти заполнены водой"],
+    ["h", "Толщина слоя груза на основании", "h", "см", "2,5", "навеска ≈ 400 г на основании штатива"],
+    ["gam", "Поверхностное натяжение воды", "γ", "Н/м", "0,0728", "при 20 °C"],
+    ["th", "Краевой угол смачивания", "θ", "°", "0", "чистые минеральные зёрна"]
+  ];
+  function parv2(it, k) { var p = it.p || {}, v = num(p[k]); if (isFinite(v)) return v; var row = PAR2.filter(function (x) { return x[0] === k; })[0]; return num(row[4]); }
+  function angle2(P, wg) {
+    var Sr = Math.min(1, Math.max(0, wg) * (P.rs / 1000) / P.e), x = Sr * 100 / P.srm, fS = Sr > 0 ? x * Math.exp(1 - x) : 0;
+    var c = P.k * 2 * P.gam * Math.cos(P.th * Math.PI / 180) / (P.dd / 1000) * fS;
+    var rho = P.rs * (1 + wg) / (1 + P.e), rsat = (P.rs + 1000 * P.e) / (1 + P.e), rmax = 1000 / rsat;
+    var u = Sr * 100 > P.sr1 ? Math.min(1, Math.pow((Sr * 100 - P.sr1) / (100 - P.sr1), 2)) : 0, ru = rmax * u;
+    var tf = Math.tan(P.phi * Math.PI / 180), a = P.phi * Math.PI / 180, sig = NaN, t = NaN;
+    for (var i = 0; i < 40; i++) { sig = rho * 9.81 * (P.h / 100) * Math.cos(a); t = c / sig + (1 - ru) * tf; a = Math.atan(t); }
+    return { wg: wg, Sr: Sr, fS: fS, c: c, rho: rho, rsat: rsat, rmax: rmax, ru: ru, sig: sig, tan: t, a: a * 180 / Math.PI };
+  }
   function model2(d) {
     var R = (d.items || []).map(function (it, i) {
       var o = { n: String(it.n || "").trim() || "Груз " + (i + 1), m0: num(it.m0), W0: num(it.w0), pts: [] };
@@ -4670,38 +4700,53 @@ var LR1Engine = (function () {
         r.W = isFinite(M) && M > 0 ? (o.mw0 + r.dw) / M * 100 : NaN;
         return r;
       });
+      if (it.am === "calc") {   /* углы ступеней — расчётом по модели */
+        o.calc = true; var P = {};
+        PAR2.forEach(function (x) { P[x[0]] = parv2(it, x[0]); });
+        o.phiOwn = isFinite(P.phi); if (!o.phiOwn) P.phi = isFinite(o.rows[0].a) ? o.rows[0].a : 30;
+        o.phiDef = !o.phiOwn && !isFinite(o.rows[0].a);
+        o.P = P; var ms = o.m0 - o.mw0;
+        o.okP = [P.rs, P.e, P.dd, P.k, P.srm, P.h, P.gam].every(function (v) { return isFinite(v) && v > 0; }) && isFinite(P.sr1) && P.sr1 < 100 && isFinite(P.th) && P.phi > 0 && P.phi < 80;
+        o.rows.forEach(function (r) {
+          if (!o.okP || !isFinite(ms) || ms <= 0) return;
+          r.cal = angle2(P, (o.mw0 + r.dw) / ms);
+          if (r.j > 0 || !isFinite(r.a)) { r.a = Math.round(r.cal.a * 10) / 10; r.est = true; }
+        });
+        o.curve = [];
+        if (o.okP && isFinite(ms) && ms > 0) { var wl = (o.mw0 + o.rows[o.rows.length - 1].dw) / ms, w0 = o.mw0 / ms; for (var q = 0; q <= 120; q++) { var wq = w0 + (wl - w0) * q / 120, cq = angle2(P, wq); o.curve.push([wq / (1 + wq) * 100, cq.a]); } }
+      }
       o.rows.forEach(function (r, j) { r.add = j ? r.M - o.rows[j - 1].M : NaN; r.da = isFinite(r.a) && isFinite(o.rows[0].a) ? r.a - o.rows[0].a : NaN; });
       o.pts = o.rows.filter(function (r) { return isFinite(r.a) && isFinite(r.W); });
-      o.has = isFinite(o.m0) || o.rows.some(function (r) { return isFinite(r.a); });
+      o.has = isFinite(o.m0) || o.rows.some(function (r) { return isFinite(r.a); }) || o.calc;
       return o;
     }).filter(function (o) { return o.has; });
     return { R: R };
   }
   function wList(rs) { return rs.map(function (r) { return fg(r.W, 1) + " %"; }).join(", "); }
   function itemConcl(o) {
-    var p = o.pts, out = [];
+    var p = o.pts, out = [], dp = o.calc ? 1 : 0;
     if (!p.length) return out;
     var a0 = o.rows[0], dryTxt = o.W0 > 0 ? "исходного груза (влажность " + fg(o.W0, 1) + " %)" : "сухого груза";
-    if (isFinite(a0.a)) out.push("Угол естественного откоса " + dryTxt + " «" + o.n + "» — " + fg(a0.a, 0) + "°.");
+    if (isFinite(a0.a)) out.push("Угол естественного откоса " + dryTxt + " «" + o.n + "» — " + fg(a0.a, a0.est ? 1 : 0) + "°" + (o.calc ? (o.phiDef ? " (принят по справочным данным)" : "") + "; углы увлажнённого груза получены расчётом по модели" : "") + ".");
     if (p.length < 2) return out;
     var A = p.map(function (r) { return r.a; }), mx = Math.max.apply(null, A), mi = Math.min.apply(null, A);
     var first = p[0], last = p[p.length - 1];
     var iMax = A.indexOf(mx), iMin = A.indexOf(mi), lastMax = A.lastIndexOf(mx);
     var nondec = A.every(function (x, i) { return !i || x >= A[i - 1]; }), noninc = A.every(function (x, i) { return !i || x <= A[i - 1]; });
-    var at = function (r) { return fg(r.a, 0) + "° при W = " + fg(r.W, 1) + " %"; };
-    if (mx === mi) { out.push("При увеличении влажности до " + fg(last.W, 1) + " % угол естественного откоса не изменился (" + fg(mx, 0) + "° — в пределах точности измерения 1°)."); return out; }
-    if (nondec) out.push("С ростом влажности от " + fg(first.W, 1) + " до " + fg(last.W, 1) + " % угол естественного откоса увеличивался: от " + fg(first.a, 0) + "° до " + fg(last.a, 0) + "°.");
-    else if (noninc) out.push("С ростом влажности от " + fg(first.W, 1) + " до " + fg(last.W, 1) + " % угол естественного откоса уменьшался: от " + fg(first.a, 0) + "° до " + fg(last.a, 0) + "°.");
+    var at = function (r) { return fg(r.a, dp) + "° при W = " + fg(r.W, 1) + " %"; };
+    if (mx === mi) { out.push("При увеличении влажности до " + fg(last.W, 1) + " % угол естественного откоса не изменился (" + fg(mx, dp) + "°" + (o.calc ? "" : " — в пределах точности измерения 1°") + ")."); return out; }
+    if (nondec) out.push("С ростом влажности от " + fg(first.W, 1) + " до " + fg(last.W, 1) + " % угол естественного откоса увеличивался: от " + fg(first.a, dp) + "° до " + fg(last.a, dp) + "°.");
+    else if (noninc) out.push("С ростом влажности от " + fg(first.W, 1) + " до " + fg(last.W, 1) + " % угол естественного откоса уменьшался: от " + fg(first.a, dp) + "° до " + fg(last.a, dp) + "°.");
     else if (iMax > 0 && lastMax < p.length - 1 && A.slice(0, iMax + 1).every(function (x, i) { return !i || x >= A[i - 1]; }) && A.slice(lastMax).every(function (x, i, s) { return !i || x <= s[i - 1]; }))
       out.push("С ростом влажности угол естественного откоса сначала увеличивался — до " + at(p[iMax]) + ", а при дальнейшем увлажнении уменьшался — до " + at(last) + ".");
     else if (iMin > 0 && A.slice(0, iMin + 1).every(function (x, i) { return !i || x <= A[i - 1]; }) && A.slice(A.lastIndexOf(mi)).every(function (x, i, s) { return !i || x >= s[i - 1]; }))
       out.push("С ростом влажности угол естественного откоса сначала уменьшался — до " + at(p[iMin]) + ", а затем снова увеличивался — до " + at(last) + ".");
-    else out.push("С ростом влажности угол естественного откоса изменялся неравномерно: от " + fg(mi, 0) + "° до " + fg(mx, 0) + "° (наибольший — " + at(p[iMax]) + ").");
+    else out.push("С ростом влажности угол естественного откоса изменялся неравномерно: от " + fg(mi, dp) + "° до " + fg(mx, dp) + "° (наибольший — " + at(p[iMax]) + ").");
     var mins = p.filter(function (r) { return r.a === mi; });
-    out.push("Угол естественного откоса минимален (" + fg(mi, 0) + "°) при относительной влажности груза " + "W = " + wList(mins) + (mins[0].j === 0 && mins.length === 1 ? " — у исходного груза, без добавления воды" : "") + ".");
+    out.push("Угол естественного откоса минимален (" + fg(mi, dp) + "°) при относительной влажности груза " + "W = " + wList(mins) + (mins[0].j === 0 && mins.length === 1 ? " — у исходного груза, без добавления воды" : "") + ".");
     if (mins[0].j === 0 && mins.length === 1) {
       var wet = p.filter(function (r) { return r.j > 0; }), wmi = Math.min.apply(null, wet.map(function (r) { return r.a; }));
-      if (wet.length) out.push("Среди увлажнённых состояний наименьший угол — " + fg(wmi, 0) + "° при W = " + wList(wet.filter(function (r) { return r.a === wmi; })) + ".");
+      if (wet.length) out.push("Среди увлажнённых состояний наименьший угол — " + fg(wmi, dp) + "° при W = " + wList(wet.filter(function (r) { return r.a === wmi; })) + ".");
     }
     return out;
   }
@@ -4713,20 +4758,44 @@ var LR1Engine = (function () {
     if (down) out.push("Уменьшение угла откоса при большой влажности объясняется тем, что вода заполняет поры между частицами: капиллярное сцепление исчезает, вода действует как смазка и уменьшает трение частиц друг о друга, груз становится подвижным (текучим), а переувлажнённый мелкозернистый груз может разжижаться.");
     return out;
   }
+  function calcBlock2(o, T) {
+    var P = o.P, g = function (x, n) { return f(x, n).replace("-", "−"); };
+    var paras = [
+      "Углы естественного откоса увлажнённого груза в этом исследовании определены не замером на штативе, а расчётом по модели предельного равновесия влажного сыпучего груза с капиллярным сцеплением (теоретическая оценка). Угол исходного груза " + (o.phiOwn ? "задан: φ′ = " + String(P.phi).replace(".", ",") + "°" : o.phiDef ? "не задан, принят по справочным данным: φ′ = 30°" : "φ′ = " + String(P.phi).replace(".", ",") + "° (табл. исходных параметров)") + " — он принимается равным углу внутреннего трения сухого груза: для сухого сыпучего груза α ≈ φ.",
+      "При наличии влаги между частицами образуются мениски воды, и к трению добавляется капиллярное сцепление c_{cap}. Условие предельного равновесия на площадке скольжения: tg α = τ / σ = (c_{cap} + σ′ · tg φ′) / σ, где τ — предельное касательное напряжение, σ — нормальное напряжение, σ′ = σ · (1 − r_{u}) — эффективное напряжение, r_{u} — доля порового давления воды. Отсюда α = arctg(c_{cap} / σ + (1 − r_{u}) · tg φ′).",
+      "Капиллярное сцепление зависит от размера частиц и водонасыщения пор S_{r}: c_{cap} ≈ k · 2γ · cos θ / d · f(S_{r}). Функция f(S_{r}) описывает долю пор, в которых действуют мениски: она равна нулю у сухого груза, максимальна при умеренном водонасыщении S_{rm} и убывает, когда вода заполняет поры и разрывает капиллярные мостики. Коэффициент k и вид функции f(S_{r}) не выводятся из физики — их определяют по испытаниям; в расчёте приняты ориентировочные значения для песка (табл. " + "параметров модели). Поровое давление появляется, когда поры почти заполнены водой (S_{r} > S_{r1}); при полном водонасыщении r_{u} = r_{max} = ρ_{w} / ρ_{sat} — как при фильтрации воды вдоль откоса."
+    ];
+    var r5 = o.rows[1], c5 = r5.cal;
+    var lines = [
+      "w = m_{в} / m_{с},   S_{r} = w · ρ_{s} / (ρ_{w} · e) ≤ 1",
+      "c_{cap} = k · 2γ · cos θ / d · f(S_{r}),   f(S_{r}) = (S_{r} / S_{rm}) · exp(1 − S_{r} / S_{rm})",
+      "σ = ρ · g · h · cos α,   ρ = ρ_{s} · (1 + w) / (1 + e)",
+      "r_{u} = r_{max} · ((S_{r} − S_{r1}) / (1 − S_{r1}))² при S_{r} > S_{r1},   r_{max} = ρ_{w} / ρ_{sat},   ρ_{sat} = (ρ_{s} + e · ρ_{w}) / (1 + e) = " + g(c5.rsat, 0) + " кг/м³",
+      "α = arctg(c_{cap} / σ + (1 − r_{u}) · tg φ′)",
+      "Пример — ступень +5 %: w = " + g(c5.wg * 100, 2) + " %;  S_{r} = " + g(c5.wg, 4) + " · " + g(P.rs, 0) + " / (1000 · " + g(P.e, 2) + ") = " + g(c5.Sr * 100, 1) + " %;  f(S_{r}) = " + g(c5.fS, 3) + ";  c_{cap} = " + g(P.k, 2) + " · 2 · " + g(P.gam, 4) + " · cos " + g(P.th, 0) + "° / " + g(P.dd / 1000, 4) + " · " + g(c5.fS, 3) + " = " + g(c5.c, 1) + " Па;  σ = " + g(c5.rho, 0) + " · 9,81 · " + g(P.h / 100, 3) + " · cos " + g(c5.a, 1) + "° = " + g(c5.sig, 0) + " Па;  r_{u} = " + g(c5.ru, 3) + ";  α = arctg(" + g(c5.c / c5.sig, 3) + " + " + g(1 - c5.ru, 3) + " · " + g(Math.tan(P.phi * Math.PI / 180), 3) + ") = " + g(c5.a, 1) + "°"
+    ];
+    var tP = { title: "Таблица " + T() + " — Параметры расчётной модели («" + o.n + "»)", headers: ["Параметр", "Обозначение", "Значение", "Примечание"], widths: [6.0, 2.4, 2.4, 5.7], lefts: [0, 3],
+      rows: PAR2.map(function (x) { var v = P[x[0]]; return [x[1], x[2], String(Math.round(v * 10000) / 10000).replace(".", ",") + (x[3] ? " " + x[3] : ""), x[0] === "phi" ? (o.phiOwn ? "задан" : o.phiDef ? "справочное значение" : "угол исходного груза") : x[5]]; }) };
+    var tC = { title: "Таблица " + T() + " — Расчёт угла естественного откоса («" + o.n + "»)", headers: ["Ступень", "w, %", "S_{r}, %", "f(S_{r})", "c_{cap}, Па", "σ, Па", "r_{u}", "tg α", "α, °"], widths: [2.4, 1.6, 1.7, 1.6, 1.9, 1.7, 1.6, 1.7, 1.7],
+      rows: o.rows.filter(function (r) { return r.cal; }).map(function (r) { var q = r.cal; return [r.j ? "+" + r.k + " %" : "исходный", g(q.wg * 100, 1), g(q.Sr * 100, 1), g(q.fS, 3), g(q.c, 1), g(q.sig, 0), g(q.ru, 3), g(q.tan, 3), g(q.a, 1)]; }) };
+    return { paras: paras, lines: lines, tables: [tP, tC] };
+  }
   function solve2(d) {
     var M = model2(d), st = [], warn = [];
     if (!M.R.length) return { steps: [], warn: ["Заполните исследование (вкладка «Вводные данные») или нажмите «Пример из методички»."], M: M };
     var tn = 0, T = function () { return ++tn; };
     M.R.forEach(function (o, i) {
       if (!isFinite(o.m0)) warn.push("«" + o.n + "»: не указана начальная масса груза — массы и влажность не считаются.");
-      var miss = o.rows.filter(function (r) { return !isFinite(r.a); });
+      var miss = o.calc ? [] : o.rows.filter(function (r) { return !isFinite(r.a); });
+      if (o.calc && !o.okP) warn.push("«" + o.n + "»: проверьте параметры расчётной модели — они должны быть положительными числами (S_{r1} < 100 %, 0 < φ′ < 80°).");
+      if (o.calc && o.phiDef) warn.push("«" + o.n + "»: не задан угол исходного (сухого) груза — для расчёта принято φ′ = 30°. Впишите угол исходного груза или φ′ в параметрах модели.");
       if (miss.length) warn.push("«" + o.n + "»: не измерен угол откоса для " + miss.map(function (r) { return r.j ? "+" + r.k + " %" : "исходного груза"; }).join(", ") + " — впишите углы, измеренные на штативе, и таблица, график и вывод дополнятся.");
       o.rows.forEach(function (r) { if (r.meas && Math.abs(r.M - r.mc) > Math.max(2, 0.02 * o.m0)) warn.push("«" + o.n + "», ступень +" + r.k + " %: взвешено " + fg(r.M, 0) + " г, а по методичке должно быть ≈ " + fg(r.mc, 1) + " г — проверьте замер (расчёт идёт по взвешенной массе)."); });
       var hdr = [o.n.toLowerCase(), "Начальная масса груза, г"].concat(STEPS.slice(1).map(function (k) { return "Масса +" + k + " %"; }));
       var t1 = { title: "Таблица " + T() + " — Исходные параметры (исследование № " + (i + 1) + ", " + o.n.toLowerCase() + ")", headers: hdr, widths: [2.4, 2.2, 1.7, 1.7, 1.7, 1.7, 1.7, 1.7],
-        rows: [["масса, г"].concat(o.rows.map(function (r) { return fg(r.M, r.j && !r.meas ? 1 : 0); })), ["угол естеств. откоса, °"].concat(o.rows.map(function (r) { return isFinite(r.a) ? fg(r.a, 0) + "°" : ""; }))] };
-      var t2 = { title: "Таблица " + T() + " — Влажность груза и угол естественного откоса («" + o.n + "»)", headers: ["Ступень", "Масса m, г", "Добавлено воды Δm_{в}, г", "Относительная влажность W, %", "Угол α, °", "Δα, °"], widths: [2.6, 2.4, 3.2, 3.4, 2.2, 2.2],
-        rows: o.rows.map(function (r) { return [r.j ? "+" + r.k + " %" : "исходный груз", fg(r.M, 1), fg(r.dw, 1), fg(r.W, 1), isFinite(r.a) ? fg(r.a, 0) : "–", r.j && isFinite(r.da) ? (r.da > 0 ? "+" : "") + f(r.da, 0).replace("-", "−") : "–"]; }) };
+        rows: [["масса, г"].concat(o.rows.map(function (r) { return fg(r.M, r.j && !r.meas ? 1 : 0); })), [o.calc ? "угол естеств. откоса (расчёт), °" : "угол естеств. откоса, °"].concat(o.rows.map(function (r) { return isFinite(r.a) ? fg(r.a, r.est ? 1 : 0) + "°" : ""; }))] };
+      var t2 = { title: "Таблица " + T() + " — Влажность груза и угол естественного откоса («" + o.n + "»)", headers: ["Ступень", "Масса m, г", "Добавлено воды Δm_{в}, г", "Относительная влажность W, %", o.calc ? "Угол α (расчёт), °" : "Угол α, °", "Δα, °"], widths: [2.6, 2.4, 3.2, 3.4, 2.2, 2.2],
+        rows: o.rows.map(function (r) { return [r.j ? "+" + r.k + " %" : "исходный груз", fg(r.M, 1), fg(r.dw, 1), fg(r.W, 1), isFinite(r.a) ? fg(r.a, r.est ? 1 : 0) : "–", r.j && isFinite(r.da) ? (r.da > 0 ? "+" : "") + f(r.da, o.calc ? 1 : 0).replace("-", "−") : "–"]; }) };
       var r5 = o.rows[1], lines = ["m = m_{0} · (1 + k/100),   Δm_{в} = m − m_{0},   W = (m_{в0} + Δm_{в}) / m · 100 %"];
       if (isFinite(o.m0)) {
         var g2 = function (x) { return String(Math.round(x * 100) / 100).replace(".", ","); };
@@ -4734,10 +4803,13 @@ var LR1Engine = (function () {
           (o.W0 > 0 ? "(" + g2(o.mw0) + " + " + g2(r5.dw) + ")" : g2(r5.dw)) + " / " + g2(r5.M) + " · 100 % = " + fg(r5.W, 2) + " %");
       }
       var ic = itemConcl(o), mins = o.pts.length >= 2 ? o.pts.filter(function (r) { return r.a === Math.min.apply(null, o.pts.map(function (q2) { return q2.a; })); }) : [];
-      st.push({ no: i + 1, noLabel: "Исследование № " + (i + 1) + ". ", title: o.n, kind: "item", o: o, lines: lines,
+      var cb = o.calc && o.okP && isFinite(o.m0) ? calcBlock2(o, T) : null;
+      if (cb) lines = lines.concat(cb.lines);
+      st.push({ no: i + 1, noLabel: "Исследование № " + (i + 1) + ". ", title: o.n, kind: "item", o: o, lines: lines, cparas: cb ? cb.paras : [], ctables: cb ? cb.tables : [],
         paras: i === 0 ? ["Масса груза на каждой ступени m = m_{0} · (1 + k/100), где k = 5, 10 … 30 % — увеличение исходной массы за счёт добавленной воды. Относительная влажность — доля воды в массе влажного груза: W = (m_{в0} + Δm_{в}) / m · 100 %, где m_{в0} = m_{0} · W_{0} / 100 — вода в исходном грузе" + (o.W0 > 0 ? "" : " (исходный груз сухой, W_{0} = 0)") + ", Δm_{в} = m − m_{0} — добавленная вода."] : [],
-        tables: [t1, t2], concl: ic, after: ic.length ? ["Вывод по исследованию: " + ic.join(" ")] : [],
-        answer: mins.length ? "α_{min} = " + fg(mins[0].a, 0) + "° при W = " + wList(mins) : isFinite(o.rows[0].a) ? "α (исходный груз) = " + fg(o.rows[0].a, 0) + "°" : "" });
+        tables: [t1, t2].concat(cb ? cb.tables : []), concl: ic, after: ic.length ? ["Вывод по исследованию: " + ic.join(" ")] : [],
+        answer: mins.length ? "α_{min} = " + fg(mins[0].a, o.calc ? 1 : 0) + "° при W = " + wList(mins) + (o.calc ? " (расчёт)" : "") : isFinite(o.rows[0].a) ? "α (исходный груз) = " + fg(o.rows[0].a, 0) + "°" : "" });
+      if (cb) st[st.length - 1].paras = st[st.length - 1].paras.concat(cb.paras);
     });
     st[0].figs = ["stand"];
     if (M.R.some(function (o) { return o.pts.length; })) st[st.length - 1].figs = (st[st.length - 1].figs || []).concat(["graph"]);
@@ -4820,7 +4892,7 @@ var LR1Engine = (function () {
     var y30 = Y(30); ln(c, [[x1, y30], [x2, y30]], 2, "#8a8f99", [14, 10]);
     R.forEach(function (o, i) {
       var col = SER[i % SER.length], pts = o.pts.map(function (p) { return [X(p.W), Y(p.a)]; });
-      ln(c, pts, 4.5, col);
+      if (o.curve && o.curve.length) ln(c, o.curve.map(function (p) { return [X(p[0]), Y(p[1])]; }), 4.5, col); else ln(c, pts, 4.5, col);
       pts.forEach(function (p) { marker(c, i, p[0], p[1], col); });
       if (o.pts.length >= 2) {
         var mi = Math.min.apply(null, o.pts.map(function (p) { return p.a; }));
@@ -4829,7 +4901,7 @@ var LR1Engine = (function () {
     });
     var lx = x2 + 40, ly = y1 + 20;
     tx(c, "Груз:", lx, ly, { size: 26, bold: true, align: "left" });
-    R.forEach(function (o, i) { var yy = ly + 50 + i * 46, col = SER[i % SER.length]; ln(c, [[lx, yy], [lx + 56, yy]], 4.5, col); marker(c, i, lx + 28, yy, col); tx(c, o.n, lx + 70, yy, { size: 25, align: "left" }); });
+    R.forEach(function (o, i) { var yy = ly + 50 + i * 46, col = SER[i % SER.length]; ln(c, [[lx, yy], [lx + 56, yy]], 4.5, col); marker(c, i, lx + 28, yy, col); tx(c, o.n + (o.calc ? " (расчёт)" : ""), lx + 70, yy, { size: 25, align: "left" }); });
     var ly2 = ly + 50 + R.length * 46 + 16;
     ln(c, [[lx, ly2], [lx + 56, ly2]], 2, "#8a8f99", [14, 10]); tx(c, "30° — граница", lx + 70, ly2, { size: 22, align: "left", color: "#555" });
     tx(c, "свободно текучих", lx + 70, ly2 + 28, { size: 22, align: "left", color: "#555" }); tx(c, "грузов (МКМПНГ)", lx + 70, ly2 + 56, { size: 22, align: "left", color: "#555" });
@@ -4846,28 +4918,40 @@ var LR1Engine = (function () {
         var m0 = num(it.m0);
         h += '<h3>Исследование № ' + (i + 1) + '</h3><div class="wd-tw"><table class="wd-t"><tbody><tr><td class="nm" style="width:52%;white-space:normal">Груз</td><td><input data-f="n" data-i="' + i + '" value="' + esc(it.n) + '"></td><td style="width:36px"><button type="button" class="wd-del" title="Удалить исследование" data-del="' + i + '">×</button></td></tr>' +
           '<tr><td class="nm" style="white-space:normal">Начальная масса груза m₀, г</td><td><input data-f="m0" data-i="' + i + '" inputmode="decimal" value="' + esc(it.m0) + '"></td><td></td></tr>' +
-          '<tr><td class="nm" style="white-space:normal">Исходная влажность W₀, % <span style="font-weight:400;color:var(--muted)">(пусто — сухой)</span></td><td><input data-f="w0" data-i="' + i + '" inputmode="decimal" value="' + esc(it.w0) + '"></td><td></td></tr></tbody></table></div>';
+          '<tr><td class="nm" style="white-space:normal">Исходная влажность W₀, % <span style="font-weight:400;color:var(--muted)">(пусто — сухой)</span></td><td><input data-f="w0" data-i="' + i + '" inputmode="decimal" value="' + esc(it.w0) + '"></td><td></td></tr>' +
+          '<tr><td class="nm" style="white-space:normal">Угол откоса на ступенях увлажнения</td><td><select data-am="' + i + '"><option value=""' + (it.am === "calc" ? "" : " selected") + '>замер на штативе</option><option value="calc"' + (it.am === "calc" ? " selected" : "") + '>расчёт по модели (формулы)</option></select></td><td></td></tr></tbody></table></div>';
+        if (it.am === "calc") {
+          h += '<div class="wd-tw"><table class="wd-t"><thead><tr><th style="width:52%">Параметр модели</th><th>Значение</th><th style="width:16%">Ед.</th></tr></thead><tbody>' +
+            PAR2.map(function (x) { return '<tr><td class="nm" style="white-space:normal">' + esc(x[1]) + " " + esc(x[2].replace(/_\{([^}]*)\}/g, "$1")) + (x[5] ? '<br><span style="font-weight:400;color:var(--muted);font-size:12px">' + esc(x[5]) + "</span>" : "") + '</td><td><input data-pk="' + x[0] + '" data-i="' + i + '" inputmode="decimal" placeholder="' + esc(x[4]) + '" value="' + esc(it.p && it.p[x[0]] || "") + '"></td><td>' + esc(x[3]) + "</td></tr>"; }).join("") + "</tbody></table></div>";
+        }
         h += '<div class="wd-tw"><table class="wd-t w5"><thead><tr><th style="width:22%">Ступень</th><th style="width:20%">Угол α, °</th><th>Масса по методичке, г</th><th>Долить воды, г</th><th>Взвешено, г <span style="font-weight:400">(необяз.)</span></th></tr></thead><tbody>';
         STEPS.forEach(function (k, j) {
           var mc = m0 * (1 + k / 100);
-          h += '<tr><td class="nm">' + (j ? "+" + k + " %" : "исходный") + '</td><td><input data-aa="' + j + '" data-i="' + i + '" inputmode="decimal" value="' + esc(it.a && it.a[j] || "") + '"></td><td data-mc="' + i + "," + j + '">' + (isFinite(m0) ? f(mc, 1) : "–") + '</td><td data-ad="' + i + "," + j + '">' + (j && isFinite(m0) ? f(m0 * 0.05, 1) : "–") + "</td><td>" +
+          h += '<tr><td class="nm">' + (j ? "+" + k + " %" : "исходный") + '</td><td>' + (it.am === "calc" && j ? '<span data-ca="' + i + "," + j + '" style="font:600 13px var(--mono);padding-left:6px">–</span>' : '<input data-aa="' + j + '" data-i="' + i + '" inputmode="decimal" value="' + esc(it.a && it.a[j] || "") + '">') + '</td><td data-mc="' + i + "," + j + '">' + (isFinite(m0) ? f(mc, 1) : "–") + '</td><td data-ad="' + i + "," + j + '">' + (j && isFinite(m0) ? f(m0 * 0.05, 1) : "–") + "</td><td>" +
             (j ? '<input data-mm="' + j + '" data-i="' + i + '" inputmode="decimal" placeholder="' + (isFinite(m0) ? f(mc, 1) : "") + '" value="' + esc(it.m && it.m[j] || "") + '">' : "") + "</td></tr>";
         });
         h += "</tbody></table></div>";
       });
       if (!I().length) h += '<p class="wd-note">Исследований нет — нажмите «+ груз» или «Пример из методички».</p>';
-      h += '<p class="wd-note">«Долить воды» — сколько воды долить на каждой ступени, чтобы масса выросла ещё на 5 % от исходной (по методичке). Если после добавления воды груз взвешивали — впишите массу в «Взвешено», расчёт пойдёт по ней. Угол — по шкале штатива, через 1°.</p></div>';
-      box.innerHTML = h; bind();
+      h += '<p class="wd-note">«Долить воды» — сколько воды долить на каждой ступени, чтобы масса выросла ещё на 5 % от исходной (по методичке). Если после добавления воды груз взвешивали — впишите массу в «Взвешено», расчёт пойдёт по ней. Угол — по шкале штатива, через 1°. В режиме «расчёт по модели» углы ступеней +5 … +30 % считаются по формулам (пустое поле параметра — значение по умолчанию для песка), угол исходного груза — φ′.</p></div>';
+      box.innerHTML = h; bind(); I().forEach(function (it, i) { upd(i); });
     }
     function bind() {
-      box.querySelectorAll("input[data-f]").forEach(function (inp) { inp.addEventListener("input", function () { var it = I()[+inp.dataset.i]; if (!it) return; it[inp.dataset.f] = inp.value; changed(); if (inp.dataset.f === "m0") refreshMass(+inp.dataset.i); }); });
-      box.querySelectorAll("input[data-mm]").forEach(function (inp) { inp.addEventListener("input", function () { var it = I()[+inp.dataset.i]; if (!it) return; if (!it.m) it.m = []; it.m[+inp.dataset.mm] = inp.value.trim(); changed(); }); });
-      box.querySelectorAll("input[data-aa]").forEach(function (inp) { inp.addEventListener("input", function () { var it = I()[+inp.dataset.i]; if (!it) return; if (!it.a) it.a = []; it.a[+inp.dataset.aa] = inp.value.trim(); changed(); }); });
+      box.querySelectorAll("input[data-f]").forEach(function (inp) { inp.addEventListener("input", function () { var it = I()[+inp.dataset.i]; if (!it) return; it[inp.dataset.f] = inp.value; changed(); if (inp.dataset.f === "m0") refreshMass(+inp.dataset.i); upd(+inp.dataset.i); }); });
+      box.querySelectorAll("input[data-mm]").forEach(function (inp) { inp.addEventListener("input", function () { var it = I()[+inp.dataset.i]; if (!it) return; if (!it.m) it.m = []; it.m[+inp.dataset.mm] = inp.value.trim(); changed(); upd(+inp.dataset.i); }); });
+      box.querySelectorAll("input[data-aa]").forEach(function (inp) { inp.addEventListener("input", function () { var it = I()[+inp.dataset.i]; if (!it) return; if (!it.a) it.a = []; it.a[+inp.dataset.aa] = inp.value.trim(); changed(); upd(+inp.dataset.i); }); });
+      box.querySelectorAll("input[data-pk]").forEach(function (inp) { inp.addEventListener("input", function () { var it = I()[+inp.dataset.i]; if (!it) return; if (!it.p) it.p = {}; it.p[inp.dataset.pk] = inp.value.trim(); changed(); upd(+inp.dataset.i); }); });
+      box.querySelectorAll("select[data-am]").forEach(function (sel) { sel.addEventListener("change", function () { var it = I()[+sel.dataset.am]; if (!it) return; it.am = sel.value; changed(); draw(); }); });
       box.querySelectorAll("[data-del]").forEach(function (b) { b.addEventListener("click", function () { I().splice(+b.dataset.del, 1); changed(); draw(); }); });
       box.querySelectorAll("[data-a]").forEach(function (b) { b.addEventListener("click", function () {
         if (b.dataset.a === "add") I().push(blank2(I().length + 1)); else data.items = ex2();
         changed(); draw();
       }); });
+    }
+    function upd(i) {   /* расчётные углы в таблице редактора */
+      var it = I()[i]; if (!it || it.am !== "calc") return;
+      var o = model2({ items: [it] }).R[0];
+      STEPS.forEach(function (k, j) { var el = box.querySelector('[data-ca="' + i + "," + j + '"]'); if (el) el.textContent = o && o.rows[j] && isFinite(o.rows[j].a) ? f(o.rows[j].a, 1) + " (расчёт)" : "–"; });
     }
     function refreshMass(i) {
       var m0 = num(I()[i] && I()[i].m0);
@@ -4895,13 +4979,20 @@ var LR1Engine = (function () {
       "Этот же образец засыпается обратно в ёмкость, туда добавляется вода до изменения исходной массы груза на 5 %. Смесь перемешивается, помещается на платформу, и измеряется угол естественного откоса. Данные заносятся в таблицу.",
       "Исследования проводятся до изменения массы груза на 30 %.",
       "Определяется относительная влажность исследуемого груза, при которой угол естественного откоса груза минимальный."]);
+    if (M.R.some(function (o) { return o.calc; })) D.text("В исследовани" + (M.R.length > 1 ? "ях, отмеченных как расчётные," : "и") + " углы естественного откоса на ступенях увлажнения получены расчётом по модели предельного равновесия влажного сыпучего груза (см. ниже), а не замером на штативе.");
     putFig("stand");
     r.steps.forEach(function (s) {
       if (s.kind !== "item") return;
       D.head("Исследование № " + s.no + " (" + s.o.n.toLowerCase() + ")", { size: 13 });
-      (s.paras || []).forEach(function (t) { D.text(t); });
-      s.lines.forEach(function (l) { if (/^Пример/.test(l)) D.text(l, { after: 4 }); else D.formula(l); });
-      s.tables.forEach(function (tb) { D.para(tb.title, { size: 11, after: 2, keep: true }); D.table(tb.headers, tb.rows, { widths: tb.widths, size: tb.headers.length > 6 ? 9 : 10 }); });
+      var nW = s.lines.length - (s.o.calc && s.cparas.length ? 6 : 0), np = (s.paras || []).length - s.cparas.length;
+      (s.paras || []).slice(0, np).forEach(function (t) { D.text(t); });
+      s.lines.slice(0, nW).forEach(function (l) { if (/^Пример/.test(l)) D.text(l, { after: 4 }); else D.formula(l); });
+      if (s.cparas.length) {
+        D.sub("Расчёт угла естественного откоса по модели");
+        s.cparas.forEach(function (t) { D.text(t); });
+        s.lines.slice(nW).forEach(function (l) { if (/^Пример/.test(l)) D.text(l, { after: 4 }); else D.formula(l); });
+      }
+      s.tables.forEach(function (tb) { D.para(tb.title, { size: 11, after: 2, keep: true }); D.table(tb.headers, tb.rows, { widths: tb.widths, size: tb.headers.length > 6 ? 9 : 10, lefts: tb.lefts }); });
       if (s.concl.length) D.text([{ t: "Вывод по исследованию: ", bold: true }, s.concl.join(" ")], { after: 8 });
       (s.figs || []).forEach(function (id) { if (id === "graph") putFig(id); });
     });
@@ -4918,7 +5009,7 @@ var LR1Engine = (function () {
     desc: "Угол естественного откоса навалочного груза на наклоняемом штативе при увлажнении до +30 % массы (через 5 %): массы, добавленная вода, относительная влажность, минимальный угол, график и вывод.",
     variants: 1, summary: false,
     variantData: function () { return { variant: "1", items: ex2(), c: "" }; },
-    hint: "Методичка «Технология перевозки грузов морем», лабораторные работы, ч. I (2016), ЛР № 2, с. 8–9. Вариантов нет — это опыт: в примере методички дано только начало (песок, 415 г, угол 17°). Впишите углы, измеренные на штативе, — массы, влажность, минимальный угол, график и вывод посчитаются сами.",
+    hint: "Методичка «Технология перевозки грузов морем», лабораторные работы, ч. I (2016), ЛР № 2, с. 8–9. Вариантов нет — это опыт: в примере методички дано только начало (песок, 415 г, угол 17°). Впишите углы, измеренные на штативе, — массы, влажность, минимальный угол, график и вывод посчитаются сами. Можно выбрать «расчёт по модели»: углы ступеней увлажнения посчитаются по формулам предельного равновесия с капиллярным сцеплением (в отчёте они помечены как расчётные).",
     sections: [
       { title: "Исследования и замеры", note: "Исследований может быть несколько (руда, щебень, зерно, песок…) — каждое со своей таблицей. Таблица заодно подсказывает, сколько воды доливать на каждой ступени.", fields: [["_bulk", "", { custom: editor2 }]] },
       { title: "Вывод (необязательно)", note: "Пусто — вывод формулируется автоматически по замерам. Свой текст заменит автоматический (каждый абзац — с новой строки).", fields: [["c", "Свой вывод", { area: true, rows: 4 }]] }
@@ -5482,7 +5573,7 @@ var LR1Engine = (function () {
   function tau(e) { var x = Math.log(e / 6.112); return 243.12 * x / (17.62 - x); }
   function rho(t, e, P) { return (P - e) * 100 / (287.05 * (t + 273.15)) + e * 100 / (461.5 * (t + 273.15)); }
   function air(t, tm, P) { var d = dPsy(t, tm, P), e = eOf(d, P); return { t: t, tm: tm, d: d, e: e, tau: tau(e), phi: e / Esat(t) * 100, dH: dsat(t, P), dH2: dsat(tm, P), rho: rho(t, e, P) }; }
-  function data5(v) { return { variant: String(v || 1), P: "1013,25", vent: "B", vt: "", vm: "", Q: "", T: "" }; }
+  function data5(v) { return { variant: String(v || 1), P: "1013,25", dz: "z", vent: "B", vt: "", vm: "", Q: "", T: "" }; }
   var CASES5 = {
     "а": "повышение влажности", "б": "понижение влажности", "в": "понижение температуры", "г": "повышение температуры",
     "д": "понижение температуры, повышение влажности", "е": "повышение температуры и влажности", "ж": "повышение температуры, понижение влажности", "з": "понижение температуры и влажности"
@@ -5558,55 +5649,163 @@ var LR1Engine = (function () {
     st.push({ no: 9, noLabel: "", title: "Вывод", kind: "fin", lines: [], paras: C });
     return { steps: st, warn: warn, M: M };
   }
+  /* диаграмма t–d (как диаграмма А методички): по умолчанию — крупный фрагмент вокруг точек Т и В,
+     по выбору — вся диаграмма. Значения точек вынесены в подпись под графиком, на поле — только построение. */
+  function niceStep5(span, n) { var raw = span / n, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; }
   function drawDiag5(cv, LK, d, r) {
-    var M = r.M, P = M.P, W = 1600, H = 1000, c = cvSet(cv, W, H); cv._cm = 16.5;
-    var tMin = Math.min(-5, Math.floor(Math.min(M.T.tau, M.B.tau, M.A1.tau, M.V.tau) / 5) * 5 - 5), tMax = Math.max(40, Math.ceil(Math.max(M.B.t, M.T.t, M.A1.t, M.V.t) / 5) * 5 + 5);
-    var dMax = Math.max(20, Math.ceil(Math.max(dsat(Math.max(M.B.t, M.T.t, M.V.t), P), dsat(M.A1.t, P)) / 5) * 5 + 5);
-    var x0 = 130, x1 = W - 60, y0 = 70, y1 = H - 130;
-    var X = function (dd) { return x0 + dd / dMax * (x1 - x0); }, Y = function (t) { return y1 - (t - tMin) / (tMax - tMin) * (y1 - y0); };
-    c.fillStyle = "#fbfbfd"; c.fillRect(x0, y0, x1 - x0, y1 - y0);
+    var M = r.M, P = M.P, V = M.V, vOwn = V !== M.B;
+    var W = 1600, H = 1110, c = cvSet(cv, W, H); cv._cm = 16.5;
+    var x0 = 150, x1 = 1530, y0 = 118, y1 = 838;
+    var pts = [M.T, M.B].concat(vOwn ? [V] : []);
+    var tLo, tHi, dLo, dHi;
+    if (d.dz === "f") {
+      tLo = Math.min(-10, Math.floor((Math.min.apply(null, pts.map(function (a) { return a.tau; })) - 2) / 5) * 5);
+      tHi = Math.max(45, Math.ceil((Math.max.apply(null, pts.map(function (a) { return a.t; })) + 3) / 5) * 5);
+      dLo = 0; dHi = Math.max(45, Math.ceil((Math.max(V.dH, M.T.d, M.B.d) + 2) / 5) * 5);
+    } else {
+      var tmin = Math.min.apply(null, pts.map(function (a) { return a.tau; })), tmax = Math.max.apply(null, pts.map(function (a) { return a.t; }));
+      var ts = niceStep5(Math.max(tmax - tmin, 6) + 5, 6);
+      tLo = Math.floor((tmin - 2) / ts) * ts; tHi = Math.ceil((tmax + 3) / ts) * ts;
+      var dmin = Math.min.apply(null, pts.map(function (a) { return a.d; })), dmax = Math.max(V.dH, M.T.d, M.B.d);
+      var ds0 = niceStep5(Math.max(dmax - dmin, 2) * 1.6, 7);
+      dLo = Math.max(0, Math.floor((dmin - (dmax - dmin) * 0.6 - ds0) / ds0) * ds0); dHi = Math.ceil((dmax + ds0 * 0.6) / ds0) * ds0;
+    }
+    var tStep = niceStep5(tHi - tLo, 8), dStep = niceStep5(dHi - dLo, 10);
+    var X = function (dd) { return x0 + (dd - dLo) / (dHi - dLo) * (x1 - x0); }, Y = function (t) { return y1 - (t - tLo) / (tHi - tLo) * (y1 - y0); };
+    var dPhi = function (t, ph) { var e = Esat(t) * ph / 100; return 622 * e / (P - e); };
+    var BL = "#1f4e9c", RD = "#c0392b", GR = "#2e7d4f", INK = "#1b1b1b";
+    var used = [];   /* занятые надписями прямоугольники */
+    function free(x, y, w, h) { return used.every(function (u) { return x + w < u[0] || x > u[0] + u[2] || y + h < u[1] || y > u[1] + u[3]; }); }
+    function lab(s, x, y, o) {   /* надпись с учётом занятого места; o.align — left|right|center */
+      o = o || {}; c.font = (o.bold ? "bold " : "") + (o.size || 22) + "px " + FONT;
+      var w = c.measureText(String(s).replace(/_\{|\}/g, "")).width, h = (o.size || 22) * 1.15, lx = o.align === "right" ? x - w : o.align === "left" ? x : x - w / 2;
+      if (o.check !== false && !free(lx - 4, y - h / 2 - 2, w + 8, h + 4)) return false;
+      used.push([lx - 4, y - h / 2 - 2, w + 8, h + 4]);
+      tx(c, s, x, y, { size: o.size || 22, bold: o.bold, italic: o.italic, color: o.color, align: o.align || "center", bg: o.bg === undefined ? "#fff" : o.bg });
+      return true;
+    }
+    /* поле и сетка */
+    c.fillStyle = "#fcfcfe"; c.fillRect(x0, y0, x1 - x0, y1 - y0);
     c.save(); c.beginPath(); c.rect(x0, y0, x1 - x0, y1 - y0); c.clip();
-    for (var t = tMin; t <= tMax; t += 5) ln(c, [[x0, Y(t)], [x1, Y(t)]], 1, "#e2e2e2");
-    for (var dd = 0; dd <= dMax; dd += dMax > 30 ? 5 : 2) ln(c, [[X(dd), y0], [X(dd), y1]], 1, "#e2e2e2");
+    var tMinor = tStep / 5, dMinor = dStep / 5, k;
+    for (k = Math.ceil(tLo / tMinor); k * tMinor <= tHi + 1e-9; k++) ln(c, [[x0, Y(k * tMinor)], [x1, Y(k * tMinor)]], 1, "#f0f0f3");
+    for (k = Math.ceil(dLo / dMinor); k * dMinor <= dHi + 1e-9; k++) ln(c, [[X(k * dMinor), y0], [X(k * dMinor), y1]], 1, "#f0f0f3");
+    for (k = Math.ceil(tLo / tStep); k * tStep <= tHi + 1e-9; k++) ln(c, [[x0, Y(k * tStep)], [x1, Y(k * tStep)]], 1.3, "#dcdce3");
+    for (k = Math.ceil(dLo / dStep); k * dStep <= dHi + 1e-9; k++) ln(c, [[X(k * dStep), y0], [X(k * dStep), y1]], 1.3, "#dcdce3");
+    /* область тумана (правее кривой насыщения) — лёгкая штриховка */
+    c.beginPath(); c.moveTo(X(dsat(tLo, P)), Y(tLo));
+    for (var tf = tLo; tf <= tHi + 0.01; tf += (tHi - tLo) / 200) c.lineTo(X(dsat(tf, P)), Y(tf));
+    c.lineTo(x1 + 50, Y(tHi)); c.lineTo(x1 + 50, y1 + 50); c.lineTo(X(dsat(tLo, P)), y1 + 50); c.closePath(); c.fillStyle = "rgba(120,140,170,0.07)"; c.fill();
+    /* линии мокрого термометра — тонкий пунктир */
+    var tmStep = tStep >= 5 ? 2 : tStep >= 2 ? 1 : 0.5;
+    for (var tw = Math.ceil((tLo - 20) / tmStep) * tmStep; tw <= tHi; tw += tmStep) {
+      var p2 = []; for (var tt2 = tw; tt2 <= tHi + 30; tt2 += (tHi - tLo) / 150) { var dv = dPsy(tt2, tw, P); if (dv < dLo - 5) break; p2.push([X(dv), Y(tt2)]); }
+      if (p2.length > 1) ln(c, p2, 1, "#d9c9a6", [5, 6]);
+    }
     /* линии φ */
-    [10, 20, 30, 40, 50, 60, 70, 80, 90].forEach(function (ph) {
-      var pts = []; for (var tt = tMin; tt <= tMax; tt += 0.5) { var e = Esat(tt) * ph / 100; pts.push([X(622 * e / (P - e)), Y(tt)]); }
-      ln(c, pts, 1.3, "#9fb3c8");
-      var tl = tMax - 4, el = Esat(tl) * ph / 100, xl = X(622 * el / (P - el)); if (xl < x1 - 30) tx(c, ph + " %", xl + 4, Y(tl) - 12, { size: 18, color: "#6a7f95", align: "left" });
-    });
-    /* линии мокрого термометра */
-    for (var tw = Math.ceil(tMin / 4) * 4; tw <= tMax; tw += 4) {
-      var p2 = []; for (var tt2 = tw; tt2 <= tMax + 25; tt2 += 0.5) { var dv = dPsy(tt2, tw, P); if (dv < 0) break; p2.push([X(dv), Y(tt2)]); }
-      ln(c, p2, 1, "#c9b48f", [6, 5]);
-    }
+    var phis = [10, 20, 30, 40, 50, 60, 70, 80, 90];
+    phis.forEach(function (ph) { var pp = []; for (var tt = tLo; tt <= tHi + 0.01; tt += (tHi - tLo) / 200) pp.push([X(dPhi(tt, ph)), Y(tt)]); ln(c, pp, 1.4, "#a9bad0"); });
     /* кривая насыщения */
-    var ps = []; for (var t3 = tMin; t3 <= tMax; t3 += 0.25) ps.push([X(dsat(t3, P)), Y(t3)]);
-    ln(c, ps, 4, "#1b1b1b");
+    var ps = []; for (var t3 = tLo; t3 <= tHi + 0.01; t3 += (tHi - tLo) / 300) ps.push([X(dsat(t3, P)), Y(t3)]);
+    ln(c, ps, 4.5, INK);
     c.restore();
-    c.lineWidth = 2.5; c.strokeStyle = "#1b1b1b"; c.strokeRect(x0, y0, x1 - x0, y1 - y0);
-    for (var t4 = tMin; t4 <= tMax; t4 += 5) tx(c, String(t4).replace("-", "−"), x0 - 12, Y(t4), { size: 22, align: "right" });
-    for (var d4 = 0; d4 <= dMax; d4 += dMax > 30 ? 5 : 2) tx(c, String(d4), X(d4), y1 + 26, { size: 22 });
-    tx(c, "t, °C", x0 - 70, y0 + 10, { size: 24, bold: true });
-    tx(c, "d, г/кг сухого воздуха", (x0 + x1) / 2, y1 + 66, { size: 24 });
-    tx(c, "φ = 100 % (кривая насыщения)", X(dsat(tMax - 12, P)) + 14, Y(tMax - 12), { size: 20, align: "left", bold: true });
-    function point(A, name, col) {
-      var px = X(A.d), py = Y(A.t);
-      ln(c, [[px, py], [px, y1]], 2, col, [8, 6]);
-      ln(c, [[px, Y(A.tau)], [x0, Y(A.tau)]], 1.6, col, [3, 5]);
-      c.beginPath(); c.arc(px, Y(A.tau), 7, 0, Math.PI * 2); c.fillStyle = col; c.fill();
-      c.beginPath(); c.arc(px, py, 11, 0, Math.PI * 2); c.fillStyle = "#fff"; c.fill(); c.lineWidth = 4; c.strokeStyle = col; c.stroke();
-      tx(c, name, px + 16, py - 22, { size: 30, bold: true, color: col, align: "left" });
-      tx(c, "d_{" + name + "} = " + f(A.d, 1), px + 6, y1 - 18, { size: 19, color: col, align: "left" });
-      tx(c, "τ_{" + name + "} = " + f(A.tau, 1).replace("-", "−"), x0 + 8, Y(A.tau) - 14, { size: 19, color: col, align: "left" });
+    c.lineWidth = 2.5; c.strokeStyle = INK; c.strokeRect(x0, y0, x1 - x0, y1 - y0);
+    /* шкалы */
+    var fmt = function (v, s) { var n = s < 1 ? 1 : 0; return f(v, n).replace("-", "−"); };
+    for (k = Math.ceil(tLo / tStep); k * tStep <= tHi + 1e-9; k++) { var tv = k * tStep; ln(c, [[x0 - 8, Y(tv)], [x0, Y(tv)]], 2, INK); tx(c, fmt(tv, tStep), x0 - 14, Y(tv), { size: 26, align: "right" }); }
+    for (k = Math.ceil(dLo / dStep); k * dStep <= dHi + 1e-9; k++) { var dv2 = k * dStep; ln(c, [[X(dv2), y1], [X(dv2), y1 + 8]], 2, INK); tx(c, fmt(dv2, dStep), X(dv2), y1 + 32, { size: 26 }); }
+    tx(c, "t, °C", x0 - 14, y0 - 30, { size: 26, bold: true, align: "right" });
+    tx(c, "d, г/кг сухого воздуха", (x0 + x1) / 2, y1 + 70, { size: 26 });
+    tx(c, "Диаграмма для расчёта вентиляционных режимов", W / 2, 36, { size: 32, bold: true });
+    tx(c, M.cs ? "Схема «" + M.cs + "»: " + CASES5[M.cs] + " при вентиляции наружным воздухом" : "Точки Т и В совпадают", W / 2, 78, { size: 26, color: "#333" });
+    /* построение точек */
+    function point(A, col) {
+      var px = X(A.d), py = Y(A.t), pt = Y(A.tau), sx = X(dsat(A.tm, P)), sy = Y(A.tm);
+      var wb = []; for (var tt = A.tm; tt <= A.t + 1e-6; tt += Math.max(0.05, (A.t - A.tm) / 40)) wb.push([X(dPsy(tt, A.tm, P)), Y(tt)]);
+      wb.push([px, py]); ln(c, wb, 2.4, col, [10, 6]);                                   /* линия t_м до точки */
+      c.beginPath(); c.arc(sx, sy, 6, 0, Math.PI * 2); c.fillStyle = "#fff"; c.fill(); c.lineWidth = 2.5; c.strokeStyle = col; c.stroke();
+      ln(c, [[px, py], [px, pt]], 2.6, col);                                                /* d = const до кривой насыщения */
+      ln(c, [[px, pt], [px, y1]], 2, col, [8, 6]);                                          /* до оси d */
+      ln(c, [[px, pt], [x0, pt]], 1.8, col, [3, 5]);                                        /* τ на ось t */
+      c.beginPath(); c.arc(px, pt, 7.5, 0, Math.PI * 2); c.fillStyle = col; c.fill();
+      return { px: px, py: py, pt: pt };
     }
-    point(M.T, "Т", "#1f4e9c"); point(M.B, "В", "#c0392b");
-    if (M.B.t !== M.T.t || M.B.d !== M.T.d) { ln(c, [[X(M.T.d), Y(M.T.t)], [X(M.B.d), Y(M.B.t)]], 2.5, "#555"); }
-    /* влагопоглотительная способность вентиляционного воздуха */
-    var V = M.V, vx = X(V.d), vy = Y(V.t), hx = X(V.dH);
-    ln(c, [[vx, vy], [hx, vy]], 2.5, "#2e8b57"); ln(c, [[hx, vy], [hx, y1]], 2, "#2e8b57", [8, 6]); arrowHead(c, hx, vy, 0, 14, "#2e8b57");
-    tx(c, "Δd = " + f(M.dd, 1) + " г/кг", (vx + hx) / 2, vy - 22, { size: 21, color: "#2e8b57", bold: true });
-    tx(c, "d_{н}", hx + 6, y1 - 44, { size: 19, color: "#2e8b57", align: "left" });
-    tx(c, "Схема «" + (M.cs || "—") + "»" + (M.cs ? ": " + CASES5[M.cs] : "") + " при вентиляции наружным воздухом", (x0 + x1) / 2, 36, { size: 24, bold: true });
+    var GT = point(M.T, BL), GB = point(M.B, RD), GV = vOwn ? point(V, GR) : null;
+    /* Δd вентиляционного воздуха */
+    var vx = X(V.d), vy = Y(V.t), hx = X(V.dH);
+    ln(c, [[vx + 12, vy], [hx - 4, vy]], 3, GR); arrowHead(c, hx, vy, 0, 18, GR);
+    ln(c, [[hx, vy], [hx, y1]], 2, GR, [8, 6]);
+    c.beginPath(); c.arc(hx, vy, 6.5, 0, Math.PI * 2); c.fillStyle = GR; c.fill();
+    /* направление изменения состояния Т → В */
+    if (M.cs) {
+      var ax = GB.px - GT.px, ay = GB.py - GT.py, al = Math.sqrt(ax * ax + ay * ay);
+      if (al > 34) { ln(c, [[GT.px + ax / al * 14, GT.py + ay / al * 14], [GB.px - ax / al * 18, GB.py - ay / al * 18]], 3, "#555"); arrowHead(c, GB.px - ax / al * 14, GB.py - ay / al * 14, Math.atan2(ay, ax), 20, "#555"); }
+    }
+    /* точки поверх линий */
+    function dot(G, col) { c.beginPath(); c.arc(G.px, G.py, 12, 0, Math.PI * 2); c.fillStyle = "#fff"; c.fill(); c.lineWidth = 4.5; c.strokeStyle = col; c.stroke(); used.push([G.px - 16, G.py - 16, 32, 32]); }
+    dot(GT, BL); dot(GB, RD); if (GV) dot(GV, GR);
+    /* подписи точек — в сторону от второй точки и вверх-влево (от кривой насыщения) */
+    function name(G, other, s, col) {
+      var vx2 = G.px - other.px, vy2 = G.py - other.py, l = Math.sqrt(vx2 * vx2 + vy2 * vy2) || 1;
+      var cands = [[vx2 / l, vy2 / l], [-0.7, -0.7], [-1, 0], [0, -1], [0.7, -0.7], [-0.7, 0.7]];
+      for (var i = 0; i < cands.length; i++) { if (lab(s, G.px + cands[i][0] * 36, G.py + cands[i][1] * 36, { size: 34, bold: true, color: col, bg: null })) return; }
+      lab(s, G.px - 36, G.py - 36, { size: 34, bold: true, color: col, bg: null, check: false });
+    }
+    name(GT, GB, "Т", BL); name(GB, GT, "В", RD); if (GV) name(GV, GT, "V", GR);
+    /* Δd — над стрелкой */
+    var ddTxt = "Δd = " + f(M.dd, 1) + " г/кг";
+    if (!lab(ddTxt, (vx + hx) / 2, vy - 26, { size: 26, bold: true, color: GR })) lab(ddTxt, (vx + hx) / 2, vy + 28, { size: 26, bold: true, color: GR, check: false });
+    /* точки росы у оси t — без наложений */
+    var taus = [[GT.pt, "τ_{Т} = " + f(M.T.tau, 1).replace("-", "−"), BL], [GB.pt, "τ_{В} = " + f(M.B.tau, 1).replace("-", "−"), RD]];
+    if (GV) taus.push([GV.pt, "τ_{V} = " + f(V.tau, 1).replace("-", "−"), GR]);
+    taus.sort(function (a, b) { return a[0] - b[0]; });
+    var lastY = -1e9; taus.forEach(function (a) { var yy = Math.max(a[0] - 18, lastY + 31); lastY = yy; lab(a[1], x0 + 10, yy, { size: 25, color: a[2], align: "left", check: false }); });
+    /* влагосодержания у оси d — ряды без наложений */
+    var dl = [[GT.px, "d_{Т} = " + f(M.T.d, 1), BL], [GB.px, "d_{В} = " + f(M.B.d, 1), RD], [hx, "d_{н} = " + f(V.dH, 1), GR]];
+    if (GV) dl.push([GV.px, "d_{V} = " + f(V.d, 1), GR]);
+    dl.sort(function (a, b) { return a[0] - b[0]; });
+    var rows = [];
+    dl.forEach(function (a) {
+      c.font = "25px " + FONT; var w = c.measureText(a[1].replace(/_\{|\}/g, "")).width + 12, lx = Math.min(a[0] + 6, x1 - w - 4);
+      var row = 0; while (rows[row] !== undefined && rows[row] > lx) row++;
+      rows[row] = lx + w; lab(a[1], lx, y1 - 20 - row * 31, { size: 25, color: a[2], align: "left", check: false });
+    });
+    /* подписи кривых: φ = 100 % и φ = 10…90 % */
+    (function () {
+      var best = null;
+      for (var i = 10; i <= 90; i++) {
+        var tt = tLo + (tHi - tLo) * i / 100, px = X(dsat(tt, P)), py = Y(tt);
+        if (px < x0 + 60 || px > x1 - 320 || py < y0 + 30 || py > y1 - 90) continue;
+        var dmin = Math.min.apply(null, [GT, GB].concat(GV ? [GV] : []).map(function (G) { return Math.min(Math.hypot(G.px - px, G.py - py), Math.hypot(G.px - px, G.pt - py)); }).concat([Math.hypot(hx - px, vy - py)]));
+        if (!best || dmin > best.dm) best = { dm: dmin, t: tt, px: px, py: py };
+      }
+      if (best) {
+        var tl = "φ = 100 % — кривая насыщения"; c.font = "bold 24px " + FONT; var wl = c.measureText(tl).width;
+        var lx = Math.min(best.px + 20, x1 - wl - 12), ly = best.py + 34;
+        if (X(dsat(Math.max(tLo, best.t - (tHi - tLo) * 0.05), P)) > lx - 4) ly += 16;
+        lab(tl, lx, ly, { size: 24, bold: true, color: INK, align: "left", bg: "rgba(244,246,250,0.95)", check: false });
+      }
+    })();
+    phis.forEach(function (ph) {
+      var tTop = tHi, dTop = dPhi(tTop, ph), s = ph + " %";
+      if (dTop > dLo && dTop < dHi - 40 * (dHi - dLo) / (x1 - x0)) { lab(s, X(dTop) + 6, y0 + 19, { size: 22, color: "#5d7390", align: "left", bg: "#fcfcfe" }); return; }
+      var lo = tLo, hi = tHi; if (dPhi(hi, ph) < dHi) return;
+      for (var it = 0; it < 40; it++) { var mid = (lo + hi) / 2; if (dPhi(mid, ph) < dHi) lo = mid; else hi = mid; }
+      if (Y(lo) > y0 + 20 && Y(lo) < y1 - 20) lab(s, x1 - 8, Y(lo) - 17, { size: 22, color: "#5d7390", align: "right", bg: "#fcfcfe" });
+    });
+    /* подпись-легенда под графиком */
+    var yL = y1 + 118, sg = function (x) { return f(x, 1).replace("-", "−"); };
+    function key(xk, col, nm, A, extra) {
+      c.beginPath(); c.arc(xk, yL, 11, 0, Math.PI * 2); c.fillStyle = "#fff"; c.fill(); c.lineWidth = 4.5; c.strokeStyle = col; c.stroke();
+      tx(c, nm, xk + 22, yL, { size: 25, bold: true, color: col, align: "left" });
+      tx(c, "t_{с} = " + sg(A.t) + " °C, t_{м} = " + sg(A.tm) + " °C;  d = " + sg(A.d) + " г/кг, τ = " + sg(A.tau) + " °C, φ = " + f(A.phi, 0) + " %" + (extra || ""), xk + 22, yL + 36, { size: 25, align: "left", color: "#222" });
+    }
+    key(x0 + 10, BL, "Т — воздух в трюме", M.T);
+    key((x0 + x1) / 2 + 20, RD, "В — наружный воздух", M.B);
+    var vl = (vOwn ? "V — вентиляционный воздух п. 3 (t_{с} = " + sg(V.t) + ", t_{м} = " + sg(V.tm) + " °C): " : "") + "Δd = d_{н} − d = " + f(V.dH, 1) + " − " + f(V.d, 1) + " = " + f(M.dd, 1) + " г/кг — влагопоглотительная способность " + (vOwn ? "" : "вентиляционного ") + "воздуха";
+    var vs = 24; c.font = vs + "px " + FONT; while (vs > 16 && c.measureText(vl.replace(/_\{|\}/g, "")).width > W - 60) { vs--; c.font = vs + "px " + FONT; }
+    tx(c, vl, W / 2, yL + 84, { size: vs, color: GR });
+    tx(c, "— — линии мокрого термометра t_{м} = const;  тонкие — φ = const;  точки на кривой насыщения — точки росы τ", W / 2, yL + 116, { size: 22, color: "#666", italic: true });
   }
   function report5(D, d, r, img) {
     var M = r.M;
@@ -5638,11 +5837,12 @@ var LR1Engine = (function () {
     titleTopic: "Способы регулирования микроклимата трюмов", titleKind: "Лабораторная работа",
     desc: "По № варианта: относительная влажность по психрометру, целесообразность вентиляции гигроскопического груза наружным воздухом (точки Т и В, d, τ, схема а–з, критерии +5 °C), потеря массы груза при вентиляции; диаграмма.",
     variants: (function () { var a = []; for (var v = 1; v <= 30; v++) a.push(v); return a; })(), variantLabel: "Вариант N (№ в журнале)", defaultVariant: 1,
-    keep: ["P", "vent"], variantData: data5, summary: false,
+    keep: ["P", "vent", "dz"], variantData: data5, summary: false,
     varText: function (d) { return "Вариант N = " + d.variant; },
     hint: "Методичка «Технология перевозки грузов морем», лабораторные работы, ч. I (2016), ЛР № 5, с. 18–23. Все исходные данные считаются от номера варианта N. Влагосодержание и точка росы — по тем же психрометрическим зависимостям, по которым построены диаграмма Рамзина и J–d (значения совпадают с диаграммой в пределах точности её чтения).",
     sections: [
-      { title: "Условия", note: "Давление по умолчанию — нормальное (1013,25 гПа = 760 мм рт. ст.).", fields: [["P", "Атмосферное давление", { num: true, unit: "гПа" }]] },
+      { title: "Условия", note: "Давление по умолчанию — нормальное (1013,25 гПа = 760 мм рт. ст.). Диаграмма по умолчанию — крупный фрагмент вокруг точек Т и В; можно показать её целиком, как в методичке.", fields: [["P", "Атмосферное давление", { num: true, unit: "гПа" }],
+        ["dz", "Диаграмма", { select: [["z", "крупно — область точек Т и В"], ["f", "целиком (−10 … 45 °C)"]] }]] },
       { title: "П. 3 — вентиляция", note: "В формуле методички Δd<sub>В</sub> и γ<sub>В</sub> — для вентиляционного воздуха В. По умолчанию это наружный воздух из п. 2; можно взять воздух из п. 1 или задать свой.", fields: [
         ["vent", "Вентиляционный воздух", { select: [["B", "наружный воздух из п. 2 (В)"], ["A", "воздух из п. 1"], ["own", "задать вручную"]], wide: true }],
         ["vt", "tс вентиляционного воздуха", { num: true, unit: "°C" }], ["vm", "tм вентиляционного воздуха", { num: true, unit: "°C" }],
