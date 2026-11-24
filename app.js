@@ -690,6 +690,7 @@ var App = (function () {
     var nVar = Array.isArray(cfg.variants) ? cfg.variants : (function () { var a = []; for (var i = 1; i <= (cfg.variants || 1); i++) a.push(i); return a; })();
     function load() {
       var s = App.store.get(cfg.key);
+      if (s && cfg.migrate) s = cfg.migrate(s);
       S.data = s && s.variant ? Object.assign(cfg.variantData(s.variant), s) : cfg.variantData(cfg.defaultVariant || nVar[0]);
     }
     function save() { App.store.set(cfg.key, S.data); }
@@ -8619,34 +8620,174 @@ var LR1Engine = (function () {
     ["Вход в реку Янцзы, 17 апреля 1999 г., с 04:00 до 14:00", "Пролив Лусон, 2 апреля 2009 г.", "03:00", 135, 17, 11, "15.05.2016", "52°59′N", "2°53′E", "11:30", "17:00"],
     ["Бухта Квичак, 27 октября 1997 г., с 12:00 до 22:00", "Пролив Цугару (восточный вход), 17 марта 2009 г.", "09:00", 270, 19, 10, "06.09.2016", "52°59′N", "2°06′E", "08:15", "13:00"],
     ["Река Хуанпуцзян, 3 мая 1999 г., с 12:00 до 20:00", "Пролив Цугару (западный вход), 12 июня 2009 г.", "13:00", 90, 19, 12, "28.06.2016", "52°21′N", "3°41′E", "17:00", "11:30"],
-    ["Бухта Квичак, 2 октября 1999 г., с 08:00 до 16:00", "Южно-Китайское море (южная часть), 20 августа 2009 г.", "15:00", 45, 17, 15, "02.05.2016", "53°29′N", "1°49′E", "14:30", "12:00"],
-    ["Бухта Квичак, 12 марта 1997 г., с 06:00 до 14:00", "Острова Анамбас, 25 февраля 2009 г.", "21:00", 180, 17, 9, "23.08.2016", "53°43′N", "2°33′E", "16:45", "15:30"],
+    ["Бухта Квичак, 2 октября 1999 г., с 08:00 до 16:00", "Южно-Китайское море (южная часть), 20 августа 2009 г.", "15:00", 45, 17, 15, "02.05.2016", "52°39′N", "1°49′E", "14:30", "12:00"],
+    ["Бухта Квичак, 12 марта 1997 г., с 06:00 до 14:00", "Острова Анамбас, 25 февраля 2009 г.", "21:00", 180, 17, 9, "23.08.2016", "52°43′N", "2°55′E", "16:45", "15:30"],
     ["Вход в гавань Грейс, 30 января 1997 г., с 08:00 до 18:00", "Залив Бакбо (Тонкинский), 30 марта 2009 г.", "21:00", 135, 10, 14, "26.12.2016", "52°43′N", "2°25′E", "09:00", "10:30"],
-    ["Вход в реку Янцзы, 21 августа 1997 г., с 06:00 до 16:00", "Корейский пролив (восточный проход), 15 января 2009 г.", "05:00", 45, 14, 10, "08.08.2016", "52°29′N", "2°58′E", "20:30", "17:00"],
+    ["Вход в реку Янцзы, 21 августа 1997 г., с 06:00 до 16:00", "Корейский пролив (восточный проход), 15 января 2009 г.", "05:00", 45, 14, 10, "08.08.2016", "52°29′N", "2°04′E", "20:30", "17:00"],
     ["Вход в бухту Сан-Диего, 4 июля 1998 г., с 06:00 до 14:00", "Корейский пролив (западный проход), 12 августа 2009 г.", "05:00", 180, 19, 6, "20.12.2016", "53°00′N", "2°46′E", "07:45", "12:00"],
     ["Пролив Врангеля, 16 июля 2000 г., с 02:00 до 10:00", "Пролив Лусон, 15 апреля 2009 г.", "13:00", 180, 18, 11, "23.05.2016", "52°56′N", "2°32′E", "06:30", "09:00"],
     ["Река Хуанпуцзян, 30 апреля 1999 г., с 12:00 до 22:00", "Пролив Цугару (восточный вход), 8 сентября 2009 г.", "17:00", 135, 18, 14, "25.07.2016", "53°09′N", "3°08′E", "06:00", "09:30"]
   ];
   var LUNAR = { 2016: 19, 2017: 0, 2018: 11, 2019: 22, 2020: 3, 2021: 14, 2022: 25, 2023: 6, 2024: 17, 2025: 28, 2026: 9 };
+  // Карта № 22212, «Сведения о течениях». Строки от −6 до +6 ч, K° / Vсиз / Vкв.
+  var CURRENT_22212 = {
+    "А": { lat: 53 + 2.6 / 60, lon: 2 + 53 / 60, rows: [
+      [40, 0.6, 0.4], [127, 0.4, 0.3], [153, 0.7, 0.4], [166, 1.0, 0.7], [170, 1.5, 1.0], [178, 1.4, 0.9],
+      [202, 0.9, 0.6], [255, 0.6, 0.4], [308, 0.9, 0.6], [344, 1.1, 0.7], [0, 1.3, 0.9], [7, 1.3, 0.9], [20, 0.9, 0.6]
+    ] },
+    "Б": { lat: 52 + 57.5 / 60, lon: 3 + 55 / 60, rows: [
+      [35, 1.3, 0.8], [39, 1.0, 0.5], [64, 0.5, 0.3], [163, 0.4, 0.2], [198, 0.9, 0.5], [210, 1.3, 0.7],
+      [212, 1.2, 0.7], [217, 0.9, 0.5], [238, 0.6, 0.4], [304, 0.2, 0.1], [12, 0.6, 0.3], [21, 1.2, 0.7], [30, 1.4, 0.8]
+    ] },
+    "В": { lat: 52 + 30.2 / 60, lon: 3 + 17.2 / 60, rows: [
+      [14, 0.4, 0.3], [214, 0.3, 0.2], [201, 0.9, 0.6], [199, 1.5, 1.0], [194, 1.8, 1.2], [196, 1.2, 0.8],
+      [205, 0.5, 0.3], [12, 0.2, 0.1], [16, 1.1, 0.7], [17, 1.5, 1.0], [18, 1.5, 1.0], [15, 1.3, 0.8], [15, 0.7, 0.5]
+    ] },
+    "Г": { lat: 52 + 13 / 60, lon: 3 + 24 / 60, rows: [
+      [0, 0.2, 0.1], [219, 0.5, 0.4], [212, 1.0, 0.7], [212, 1.3, 0.9], [212, 1.3, 0.9], [211, 1.0, 0.7],
+      [205, 0.4, 0.3], [56, 0.4, 0.3], [47, 1.0, 0.7], [41, 1.3, 0.8], [34, 1.1, 0.7], [21, 0.8, 0.5], [352, 0.4, 0.3]
+    ] },
+    "Д": { lat: 52 + 10 / 60, lon: 2 + 40 / 60, rows: [
+      [10, 0.5, 0.4], [194, 0.4, 0.2], [195, 1.3, 0.8], [198, 1.8, 1.2], [201, 1.8, 1.2], [204, 1.3, 0.9],
+      [201, 0.4, 0.3], [30, 0.5, 0.3], [27, 1.3, 0.9], [27, 1.8, 1.2], [20, 1.8, 1.2], [15, 1.4, 0.9], [11, 0.7, 0.5]
+    ] },
+    "Е": { lat: 52 + 59.1 / 60, lon: 1 + 35 / 60, rows: [
+      [327, 1.7, 1.0], [327, 2.6, 1.5], [327, 2.7, 1.6], [327, 1.9, 1.1], [327, 0.7, 0.5], [147, 0.6, 0.3],
+      [147, 1.6, 0.9], [147, 2.4, 1.4], [147, 2.4, 1.5], [147, 1.9, 1.2], [147, 1.1, 0.6], [327, 0.1, 0.1], [327, 1.3, 0.7]
+    ] }
+  };
+  function chartCoordinate(s) {
+    var m = String(s || "").match(/^\s*(\d{1,3})\s*°\s*(\d{1,2}(?:[.,]\d+)?)\s*['′’]?\s*[NEСВ]?\s*$/i);
+    return m && num(m[2]) < 60 ? +m[1] + num(m[2]) / 60 : NaN;
+  }
+  function nearestCurrent(lat, lon) {
+    var best = "", distance = Infinity;
+    if (!isFinite(lat) || !isFinite(lon)) return best;
+    Object.keys(CURRENT_22212).forEach(function (id) {
+      var point = CURRENT_22212[id];
+      var d = Math.hypot(point.lat - lat, (point.lon - lon) * Math.cos((point.lat + lat) / 2 * R));
+      if (d < distance) { best = id; distance = d; }
+    });
+    return best;
+  }
+  function currentTime(s) {
+    var m = String(s || "").match(/^\s*(\d{1,2})[:.](\d{2})\s*$/);
+    return m && +m[1] < 24 && +m[2] < 60 ? +m[1] * 60 + +m[2] : NaN;
+  }
+  function currentPhase(age) {
+    function dist(center) { var d = Math.abs(age - center); return Math.min(d, 29 - d); }
+    var spring = Math.min(dist(0), dist(14.5)), neap = Math.min(dist(7.25), dist(21.75));
+    return { spring: spring <= neap, between: Math.min(spring, neap) > 2 };
+  }
+  function savedCurrentData(s) {
+    if (s.chartRevision) return s;
+    var old = {
+      N: "218.4", N1: "218", N2: "219", C: "1.11",
+      t1: "8; 0,3; 270; 2,2; 90\n10; 6,0; 270; 4,0; 270\n12; 6,8; 270; 6,8; 270\n14; 2,7; 270; 4,5; 270\n16; 3,0; 90; 0,7; 90\n18; 4,2; 90; 3,6; 90",
+      k1: "14:00", a1: "103", v1: "0.4", k2: "16:00", a2: "46", v2: "0.7", kw: "45", vw: "0.5",
+      tab3: "-4; 201; 0,9; 0,5\n-3; 199; 1,5; 0,8"
+    };
+    var migrated = Object.assign({}, s);
+    [["N", "N1", "N2", "C", "t1"], ["k1", "a1", "v1"], ["k2", "a2", "v2"], ["kw", "vw"], ["tab3"]].forEach(function (keys) {
+      if (keys.every(function (key) { return String(s[key]) === old[key]; })) {
+        keys.forEach(function (key) { delete migrated[key]; });
+      }
+    });
+    var variant = Number(s.variant);
+    if ((variant === 18 && s.p3 === "53°29′N") || (variant === 19 && s.p3 === "53°43′N")) delete migrated.p3;
+    if ((variant === 19 && s.l3 === "2°33′E") || (variant === 21 && s.l3 === "2°58′E")) delete migrated.l3;
+    if (migrated.tab3) migrated.currentPoint = "manual";
+    return migrated;
+  }
   function vec(K, V) { return [V * Math.sin(K * R), V * Math.cos(K * R)]; }
   function polar(v) { return [((Math.atan2(v[0], v[1]) / R) + 360) % 360, Math.sqrt(v[0] * v[0] + v[1] * v[1])]; }
+  function currentAnswer(K, V) { return (V < 1e-9 ? "направление не определяется" : Math.round(K) % 360 + "°") + ", " + f(V, 1) + " уз"; }
+  function currentRows(text, count) {
+    var rows = String(text || "").trim().split(/\r?\n/).filter(function (line) { return line.trim(); }).map(function (line) {
+      return line.split(/[;\t]/).map(function (cell) { return num(cell.trim()); });
+    });
+    return rows.every(function (row) { return row.length === count && row.every(isFinite); }) ? rows : [];
+  }
+  function betweenVectors(a, b, k) { return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k]; }
+  function chartCurrent(d) {
+    var p = d.currentPoint || nearestCurrent(chartCoordinate(d.p3), chartCoordinate(d.l3));
+    var port = p === "Е" ? "Иммингем" : "Дувр", high = p === "Е" ? d.TpvE : d.Tpv;
+    var step = { no: 3, title: "Элементы приливного течения по карте № 22212",
+      given: d.d3 + ", φ = " + d.p3 + ", λ = " + d.l3 + ", Tс = " + d.T3,
+      lines: [] };
+    if (!p || (p !== "manual" && !CURRENT_22212[p])) {
+      step.lines.push("Укажите координаты карты в градусах и минутах или выберите пункт вручную.");
+      return step;
+    }
+    if (p !== "manual") step.lines.push((d.currentPoint ? "Выбран пункт " : "Ближайший к координатам пункт ") + p + " карты № 22212. Опорный порт — " + port + ".");
+    var time = currentTime(d.T3), highTime = currentTime(high);
+    if (!isFinite(time) || !isFinite(highTime)) {
+      step.lines.push("Введите судовое время и время полной воды в порту " + port + " в формате чч:мм.");
+      return step;
+    }
+    var offset = time - highTime;
+    if (offset > 720) offset -= 1440;
+    if (offset < -720) offset += 1440;
+    var h = offset / 60;
+    step.lines.push("Водный час: ВЧ = Tс − TПВ = " + d.T3 + " − " + high + " = " + dur(h) + (h < 0 ? " (до ПВ)" : h > 0 ? " (после ПВ)" : " (полная вода)"));
+    var m = String(d.d3 || "").match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    var day = m ? +m[1] : 0, month = m ? +m[2] : 0, year = m ? +m[3] : 0;
+    if (!LUNAR.hasOwnProperty(year) || day < 1 || month < 1 || month > 12 || day > new Date(Date.UTC(year, month, 0)).getUTCDate()) {
+      step.lines.push("Укажите действительную дату 2016–2026 гг. для выбора лунного числа.");
+      return step;
+    }
+    var sum = day + month + LUNAR[year], age = sum % 30, phase = currentPhase(age);
+    var spring = d.currentPhase ? d.currentPhase === "spring" : phase.spring;
+    var phaseName = spring ? "сизигия" : "квадратура";
+    step.lines.push("Возраст Луны: " + day + " + " + month + " + " + LUNAR[year] + " = " + sum + (sum >= 30 ? " → " + age : "") + " сут.");
+    step.lines.push(d.currentPhase ? "Столбец выбран вручную: " + phaseName + "." :
+      phase.between ? "Возраст между секторами рис. 6.6. Для расчёта взята ближайшая фаза — " + phaseName + "." :
+        "По рис. 6.6 выбран столбец «" + phaseName + "».");
+    var rows = p === "manual" ? currentRows(d.tab3, 4) : CURRENT_22212[p].rows.map(function (row, i) { return [i - 6].concat(row); });
+    if (rows.some(function (row) { return row[0] < -6 || row[0] > 6 || row[1] < 0 || row[1] > 360 || row[2] < 0 || row[3] < 0; })) rows = [];
+    rows.sort(function (a, b) { return a[0] - b[0]; });
+    var lo = null, hi = null;
+    rows.forEach(function (row) {
+      if (row[0] <= h) lo = row;
+      if (row[0] >= h && !hi) hi = row;
+    });
+    if (!lo || !hi || rows.some(function (row, i) { return i > 0 && row[0] === rows[i - 1][0]; })) {
+      step.lines.push(p === "manual" ? "Введите строки для водного часа без повторов, с направлением и обеими скоростями." :
+        "Водный час вне диапазона таблицы карты (от −6 до +6 ч). Проверьте время ближайшей полной воды.");
+      return step;
+    }
+    var col = spring ? 2 : 3, k = hi[0] === lo[0] ? 0 : (h - lo[0]) / (hi[0] - lo[0]);
+    var delta = (hi[1] - lo[1] + 540) % 360 - 180;
+    var bearing = (lo[1] + delta * k + 360) % 360, speed = lo[col] + (hi[col] - lo[col]) * k;
+    var entries = (lo === hi ? [lo] : [lo, hi]).map(function (row) {
+      return dur(row[0]) + " — " + currentAnswer(row[1], row[col]);
+    });
+    step.lines.push((lo === hi ? "Строка таблицы: " : "Интерполяция между строками таблицы: ") + entries.join(" и ") + ".");
+    step.answer = currentAnswer(bearing, speed) + " (" + phaseName + ", ВЛ " + age + " сут)";
+    return step;
+  }
   App.taskWork({
     disc: "nav", discName: "Навигация и лоция", id: "nav-lr6", order: 6, key: "nav-lr6", file: "ЛР6_Течения",
     no: "ЛР 6", short: "ЛР №6", eyebrow: "Навигация и лоция · Лабораторная работа №6", title: "Расчёт элементов течений по пособиям и картам",
-    desc: "Табл. 6.1, варианты 1–24: течения по таблице течений (интерполяция по N, множитель C, таблица и график), приливное + ветровое = суммарное течение (векторы), приливное течение по карте 22212 (водный час, возраст Луны).",
+    desc: "Табл. 6.1, варианты 1–24. Расчёт течений по таблицам № 6409 и № 6004, графики скорости и направления, приливное течение по карте № 22212.",
     variants: 24,
+    migrate: savedCurrentData,
     variantData: function (v) { var x = V6[v] || V6[1]; return { variant: String(v), task1: x[0], place2: x[1], T2: x[2], wK: x[3], wS: x[4], wH: x[5], d3: x[6], p3: x[7], l3: x[8], T3: x[9], Tpv: x[10],
-      N: 218.4, N1: 218, N2: 219, C: 1.11, t1: "8; 0,3; 270; 2,2; 90\n10; 6,0; 270; 4,0; 270\n12; 6,8; 270; 6,8; 270\n14; 2,7; 270; 4,5; 270\n16; 3,0; 90; 0,7; 90\n18; 4,2; 90; 3,6; 90",
-      k1: "14:00", a1: 103, v1: 0.4, k2: "16:00", a2: 46, v2: 0.7, kw: 45, vw: 0.5, tab3: "-4; 201; 0,9; 0,5\n-3; 199; 1,5; 0,8" }; },
-    hint: "Табличные значения течений выписываются из «Таблиц течений» (№ 6409), «Таблиц приливов на 2009 г.» т. IV и таблицы приливных течений карты № 22212. По умолчанию стоят числа из примеров методички — замените своими для варианта.",
+      chartRevision: 1, N: "", N1: "", N2: "", C: "", t1: "",
+      k1: "", a1: "", v1: "", k2: "", a2: "", v2: "", kw: "", vw: "", currentPoint: "", TpvE: "", currentPhase: "", tab3: "" }; },
+    hint: 'Задачи 1 и 2 требуют значений из таблиц № 6409 и № 6004. В задаче 3 данные берутся с карты № 22212. <a href="m/nav-lab.pdf#page=47" target="_blank" rel="noopener">Методичка, с. 48–54</a>.',
     sections: [
       { title: "Задача 1 — таблица течений (№ 6409)", fields: [["task1", "Задание", { wide: true }], ["N", "Астрон. параметр N", { num: true }], ["C", "Коэффициент C", { num: true }], ["N1", "Табличное N₁", { num: true }], ["N2", "Табличное N₂", { num: true }],
         ["t1", "Час; V(N₁); K(N₁); V(N₂); K(N₂) — по строкам", { area: true, rows: 7 }]] },
       { title: "Задача 2 — приливное, ветровое и суммарное течения", fields: [["place2", "Район, дата", { wide: true }], ["T2", "Момент T"], ["wK", "Ветер, направление", { num: true, unit: "°" }], ["wS", "скорость", { num: true, unit: "м/с" }], ["wH", "в течение", { num: true, unit: "ч" }],
         ["k1", "Приливное: табл. момент 1"], ["a1", "K₁", { num: true, unit: "°" }], ["v1", "V₁", { num: true, unit: "уз" }], ["k2", "табл. момент 2"], ["a2", "K₂", { num: true, unit: "°" }], ["v2", "V₂", { num: true, unit: "уз" }],
         ["kw", "Ветровое течение Kв (из т. III)", { num: true, unit: "°" }], ["vw", "Vв", { num: true, unit: "уз" }]] },
-      { title: "Задача 3 — карта № 22212", fields: [["d3", "Дата (дд.мм.гггг)"], ["p3", "φ"], ["l3", "λ"], ["T3", "Судовое время Tс"], ["Tpv", "ПВ в п. Дувр"],
-        ["tab3", "Таблица карты: ВЧ(±ч); K; Vсиз; Vкв — по строкам", { area: true, rows: 5 }]] }],
+      { title: "Задача 3 — карта № 22212", note: 'Для пункта Е требуется время полной воды в Иммингеме. Для остальных пунктов карты используется Дувр.',
+        fields: [["d3", "Дата (дд.мм.гггг)"], ["p3", "Широта φ, N"], ["l3", "Долгота λ, E"], ["T3", "Судовое время Tс"], ["Tpv", "ПВ в Дувре"], ["TpvE", "ПВ в Иммингеме (для пункта Е)"],
+          ["currentPoint", "Пункт карты", { select: [["", "Ближайший по координатам"], ["А", "А"], ["Б", "Б"], ["В", "В"], ["Г", "Г"], ["Д", "Д"], ["Е", "Е"], ["manual", "Ввести строки вручную"]] }],
+          ["currentPhase", "Фаза для выбора столбца", { select: [["", "По возрасту Луны"], ["spring", "Сизигия"], ["neap", "Квадратура"]] }],
+          ["tab3", "Ручной ввод для Дувра: ВЧ (±ч); K; Vсиз; Vкв", { area: true, rows: 3 }]] }],
+    inputNote: '<details class="blk"><summary>Фото таблицы течений карты № 22212</summary><img src="m/nav-current/001.jpg" alt="Таблица приливных течений карты № 22212, пункты А–Е" loading="lazy" style="display:block;max-width:100%;height:auto;transform:rotate(180deg)"></details>',
     goal: "Учебная цель: научиться пользоваться таблицами течений, таблицами приливов (ч. III и ч. IV) и навигационными картами, где указаны таблицы с элементами течений. Учебно-методическое обеспечение: Таблицы течений. Тихий океан № 6409 (1988); Таблицы приливов на 2009 г., т. IV; морская навигационная карта № 22212, М 1:200 000 (Северное море, южная часть) с таблицами элементов прилива и приливных течений.",
     figs: { g1: { caption: "Задача 1 — график скорости течения (+ — направление K₁, − — обратное)", draw: function (cv, LK, d, r) {
         var p = r.p1, W = 1300, H = 600; cv.width = W; cv.height = H; var c = cv.getContext("2d"), FONT = LK.font, INK = LK.ink || "#1d3557"; c.fillStyle = "#fff"; c.fillRect(0, 0, W, H);
@@ -8657,7 +8798,26 @@ var LR1Engine = (function () {
         c.strokeStyle = "#333"; c.lineWidth = 2; c.beginPath(); c.moveTo(x0, Y(0)); c.lineTo(x1, Y(0)); c.stroke();
         c.textAlign = "right"; for (var v = -Math.floor(vm); v <= Math.floor(vm); v++) c.fillText(f(v, 0), x0 - 10, Y(v) + 7);
         c.strokeStyle = INK; c.lineWidth = 4; c.beginPath(); p.forEach(function (q, i) { if (i) c.lineTo(X(q.t), Y(q.s)); else c.moveTo(X(q.t), Y(q.s)); }); c.stroke();
-        p.forEach(function (q) { c.fillStyle = INK; c.beginPath(); c.arc(X(q.t), Y(q.s), 7, 0, 2 * Math.PI); c.fill(); c.fillStyle = "#111"; c.textAlign = "center"; c.font = "600 18px " + FONT; c.fillText(f(q.V, 1) + " уз " + q.K + "°", X(q.t), Y(q.s) + (q.s >= 0 ? -14 : 28)); });
+        p.forEach(function (q) { c.fillStyle = INK; c.beginPath(); c.arc(X(q.t), Y(q.s), 7, 0, 2 * Math.PI); c.fill(); c.fillStyle = "#111"; c.textAlign = "center"; c.font = "600 18px " + FONT; c.fillText(f(q.V, 1) + " уз", X(q.t), Y(q.s) + (q.s >= 0 ? -14 : 28)); });
+      } },
+      k1: { caption: "Задача 1 — изменение направления течения по времени", draw: function (cv, LK, d, r) {
+        cv.width = 1100; cv.height = 440;
+        var c = cv.getContext("2d"), p = r.p1, t0 = p[0].t, span = Math.max(1, p[p.length - 1].t - t0);
+        function Y(k) { return 372 - k * 0.9; }
+        c.fillStyle = "#fff"; c.fillRect(0, 0, cv.width, cv.height);
+        c.font = "20px " + LK.font;
+        for (var angle = 0; angle <= 360; angle += 90) {
+          c.fillStyle = "#333"; c.textAlign = "right"; c.fillText(angle + "°", 80, Y(angle) + 6);
+          c.strokeStyle = "#ddd"; c.beginPath(); c.moveTo(95, Y(angle)); c.lineTo(1010, Y(angle)); c.stroke();
+        }
+        p.forEach(function (q) {
+          var x = 95 + 915 * (q.t - t0) / span;
+          c.fillStyle = "#333"; c.textAlign = "center"; c.fillText(q.t + " ч", x, 410);
+          if (!q.V) return;
+          c.fillStyle = LK.ink || "#1d3557";
+          c.beginPath(); c.arc(x, Y(q.K), 6, 0, 2 * Math.PI); c.fill();
+          c.fillText(Math.round(q.K) % 360 + "°", x, Y(q.K) - 12);
+        });
       } },
       g2: { caption: "Задача 2 — геометрическая интерполяция и сложение векторов течений", draw: function (cv, LK, d, r) {
         var q = r.q2, W = 1100, H = 700; cv.width = W; cv.height = H; var c = cv.getContext("2d"), FONT = LK.font; c.fillStyle = "#fff"; c.fillRect(0, 0, W, H);
@@ -8674,48 +8834,70 @@ var LR1Engine = (function () {
         c.fillStyle = "#111"; c.font = "600 24px " + FONT; c.textAlign = "left"; c.fillText("N ↑", 30, 40);
       } } },
     solve: function (d) {
-      var st = [], warn = [];
-      /* 1 */
-      var N = num(d.N), N1 = num(d.N1), N2 = num(d.N2), C = num(d.C), k = (N - N1) / (N2 - N1), p1 = [], ref = null;
-      String(d.t1 || "").split(/\n+/).forEach(function (l) { var a = l.split(/[;\t]/).map(function (x) { return x.trim(); }); if (a.length < 5) return;
-        var t = num(a[0]), v1 = num(a[1]), K1 = num(a[2]), v2 = num(a[3]), K2 = num(a[4]); if (ref === null) ref = K1;
-        var s1 = Math.abs(((K1 - ref + 540) % 360) - 180) < 90 ? v1 : -v1, s2 = Math.abs(((K2 - ref + 540) % 360) - 180) < 90 ? v2 : -v2, sv = s1 + (s2 - s1) * k, sc = sv * C;
-        p1.push({ t: t, v1: v1, K1: K1, v2: v2, K2: K2, si: sv, s: sc, V: Math.abs(sc), K: sc >= 0 ? ref : (ref + 180) % 360 }); });
-      st.push({ no: 1, title: "Элементы течения по таблице течений", given: d.task1 + ";  N = " + f(N, 1) + ", C = " + f(C, 2), figs: p1.length ? ["g1"] : [],
-        lines: ["Линейная интерполяция по N между N₁ = " + f(N1, 0) + " и N₂ = " + f(N2, 0) + ": V = V₁ + (V₂ − V₁)·(N − N₁)/(N₂ − N₁), k = " + f(k, 2) + " (противоположные направления — со знаком «−»)", "V = Vинт · C"],
-        tables: [{ headers: ["Час", "N₁: V; K", "N₂: V; K", "N = " + f(N, 1), "·C: V; K"], rows: p1.map(function (q) { return [String(q.t), f(q.v1, 1) + "; " + q.K1 + "°", f(q.v2, 1) + "; " + q.K2 + "°", f(Math.abs(q.si), 1) + "; " + (q.si >= 0 ? ref : (ref + 180) % 360) + "°", f(q.V, 1) + "; " + q.K + "°"]; }), widths: [1.6, 3.4, 3.4, 3.4, 3.4] }],
-        answer: p1.map(function (q) { return q.t + " ч — " + q.K + "°, " + f(q.V, 1) + " уз"; }).join("; ") });
-      /* 2 */
-      var tA = hm(d.k1), tB = hm(d.k2), tc = hm(d.T2), kk = (tc - tA) / (tB - tA), v1 = vec(num(d.a1), num(d.v1)), v2 = vec(num(d.a2), num(d.v2));
-      var vt = [v1[0] + (v2[0] - v1[0]) * kk, v1[1] + (v2[1] - v1[1]) * kk], pt = polar(vt), vw = vec(num(d.kw), num(d.vw)), vs = [vt[0] + vw[0], vt[1] + vw[1]], ps = polar(vs);
-      st.push({ no: 2, title: "Приливное, ветровое и суммарное течения", given: d.place2 + " в " + d.T2 + " после действия ветра " + d.wK + "° — " + d.wS + " м/с в течение " + d.wH + " ч", figs: ["g2"],
-        lines: ["Приливное течение по таблице: " + d.k1 + " — " + f(num(d.a1), 0) + "°, " + f(num(d.v1), 1) + " уз;  " + d.k2 + " — " + f(num(d.a2), 0) + "°, " + f(num(d.v2), 1) + " уз",
-          "Геометрическая интерполяция на " + d.T2 + " (конец вектора делит отрезок между концами табличных векторов в отношении " + f(kk, 2) + "): Vт пр = " + f(pt[0], 0) + "° − " + f(pt[1], 1) + " уз",
-          "Ветровое течение (ч. III «Течения», ветер " + d.wK + "° — " + d.wS + " м/с): Vт в = " + f(num(d.kw), 0) + "° − " + f(num(d.vw), 1) + " уз",
-          "Суммарное течение — геометрическая сумма: Vт сум = Vт пр + Vт в = " + f(ps[0], 0) + "° − " + f(ps[1], 1) + " уз"],
-        answer: "Vт пр = " + f(pt[0], 0) + "° − " + f(pt[1], 1) + " уз; Vт сум = " + f(ps[0], 0) + "° − " + f(ps[1], 1) + " уз" });
-      var q2 = { v1: v1, v2: v2, vt: vt, vs: vs, pt: pt, ps: ps, kw: num(d.kw), vw: num(d.vw), a1: num(d.a1), a2: num(d.a2), s1: num(d.v1), s2: num(d.v2), k1: d.k1, k2: d.k2 };
-      /* 3 */
-      var dm3 = String(d.d3).match(/(\d+)\D+(\d+)\D+(\d{4})/), day = dm3 ? +dm3[1] : NaN, mon = dm3 ? +dm3[2] : NaN, yr = dm3 ? +dm3[3] : NaN, ln = LUNAR[yr];
-      var vch = hm(d.T3) - hm(d.Tpv), age = day + mon + (ln === undefined ? 0 : ln), age30 = ((age % 30) + 30) % 30;
-      if (ln === undefined) warn.push("Лунное число для " + yr + " г. не найдено (таблица 2016–2026).");
-      function dist(a, b) { var x = Math.abs(a - b); return Math.min(x, 29.5 - x); }
-      var ds = Math.min(dist(age30, 0), dist(age30, 14.75)), dq = Math.min(dist(age30, 7.25), dist(age30, 21.75)), syz = ds <= dq;
-      var rows3 = [];
-      String(d.tab3 || "").split(/\n+/).forEach(function (l) { var a = l.split(/[;\t]/).map(function (x) { return x.trim(); }); if (a.length >= 4) rows3.push({ h: num(a[0]), K: num(a[1]), s: num(a[2]), n: num(a[3]) }); });
-      rows3.sort(function (a, b) { return a.h - b.h; });
-      var lo = null, hi = null; rows3.forEach(function (r) { if (r.h <= vch + 1e-9) lo = r; if (r.h >= vch - 1e-9 && !hi) hi = r; });
-      var K3 = NaN, V3 = NaN;
-      if (lo && hi) { var kx = hi.h === lo.h ? 0 : (vch - lo.h) / (hi.h - lo.h), dk = ((hi.K - lo.K + 540) % 360) - 180; K3 = (lo.K + dk * kx + 360) % 360; V3 = (syz ? lo.s : lo.n) + ((syz ? hi.s : hi.n) - (syz ? lo.s : lo.n)) * kx; }
-      else warn.push("Задача 3: впишите строки таблицы приливных течений карты для ВЧ " + dur(vch) + " (соседние часы).");
-      st.push({ no: 3, title: "Элементы приливного течения по карте № 22212", given: d.d3 + ", φ = " + d.p3 + ", λ = " + d.l3 + ", Tс = " + d.T3 + ", ПВ в п. Дувр " + d.Tpv,
-        lines: ["По координатам определяется ромб (буква) района на карте, для него — таблица приливного течения",
-          "Водный час: ВЧ = Tс − TПВ = " + d.T3 + " − " + d.Tpv + " = " + dur(vch) + (vch < 0 ? " (до ПВ)" : " (после ПВ)"),
-          "Возраст Луны: ВЛ = число + месяц + лунное число (" + yr + " г. — " + (ln === undefined ? "?" : ln) + ") = " + day + " + " + mon + " + " + (ln === undefined ? "?" : ln) + " = " + age + (age >= 30 ? " → " + age30 : "") + " сут",
-          "По схеме возраста Луны (рис. 6.6): " + (syz ? "сизигия" : "квадратура") + " → используется столбец " + (syz ? "Spring (сизигия)" : "Neap (квадратура)"),
-          lo && hi ? "Интерполяция по таблице: " + dur(lo.h) + " — " + f(lo.K, 0) + "°, " + f(syz ? lo.s : lo.n, 1) + " уз;  " + dur(hi.h) + " — " + f(hi.K, 0) + "°, " + f(syz ? hi.s : hi.n, 1) + " уз" : "Нет строк таблицы течений"],
-        answer: isFinite(K3) ? "Kт = " + f(K3, 0) + "°, Vт = " + f(V3, 1) + " уз (" + (syz ? "сизигия" : "квадратура") + ", ВЛ " + age30 + " сут)" : (syz ? "сизигия" : "квадратура") + ", ВЧ " + dur(vch) });
-      return { steps: st, warn: warn, p1: p1, q2: q2 };
+      var task1 = { no: 1, title: "Элементы течения по таблице течений", given: d.task1, lines: [] };
+      var task2 = { no: 2, title: "Приливное, ветровое и суммарное течения",
+        given: d.place2 + " в " + d.T2 + " после действия ветра " + d.wK + "° — " + d.wS + " м/с в течение " + d.wH + " ч", lines: [] };
+      var N = num(d.N), N1 = num(d.N1), N2 = num(d.N2), C = num(d.C);
+      var rows = currentRows(d.t1, 5).sort(function (a, b) { return a[0] - b[0]; });
+      var rowsOk = rows.length >= 2 && rows.every(function (row, i) {
+        return row[0] >= 0 && row[0] <= 24 && (!i || row[0] !== rows[i - 1][0]) &&
+          row[1] >= 0 && row[3] >= 0 && row[2] >= 0 && row[2] <= 360 && row[4] >= 0 && row[4] <= 360;
+      });
+      var range = String(d.task1 || "").match(/с\s+(\d{1,2}):00\s+до\s+(\d{1,2}):00/i);
+      var rangeOk = !range || (rowsOk && rows[0][0] === +range[1] && rows[rows.length - 1][0] === +range[2]);
+      var p1 = [];
+      if (rowsOk && rangeOk && isFinite(N) && N1 < N2 && N >= N1 && N <= N2 && C > 0) {
+        var k = (N - N1) / (N2 - N1), ref = rows[0][2];
+        p1 = rows.map(function (row) {
+          var p = polar(betweenVectors(vec(row[2], row[1]), vec(row[4], row[3]), k));
+          var vi = Math.round(p[1] * 10) / 10, V = vi * C;
+          var sign = Math.cos((p[0] - ref) * R) >= 0 ? 1 : -1;
+          return { t: row[0], raw: row, vi: vi, V: V, s: sign * V, K: p[0] };
+        });
+        task1.figs = ["g1", "k1"];
+        task1.lines = [
+          "Из таблицы № 6409: N = " + f(N, 1) + ", N₁ = " + f(N1, 0) + ", N₂ = " + f(N2, 0) + ", C = " + f(C, 2) + ".",
+          "Доля интерполяции (N − N₁)/(N₂ − N₁) = " + f(k, 2) + ". Интерполяция выполнена по векторам течения.",
+          "Скорость после интерполяции округляется до 0,1 уз и умножается на C. Положительная сторона графика скорости соответствует направлению " + ref + "°."
+        ];
+        task1.tables = [{ headers: ["Час", "N₁: V; K", "N₂: V; K", "N: V; K", "После поправки C"], rows: p1.map(function (q) {
+          return [q.t + " ч", currentAnswer(q.raw[2], q.raw[1]), currentAnswer(q.raw[4], q.raw[3]),
+            currentAnswer(q.K, q.vi), currentAnswer(q.K, q.V)];
+        }), widths: [1.6, 3.4, 3.4, 3.4, 3.4] }];
+        task1.answer = p1.map(function (q) { return q.t + " ч — " + currentAnswer(q.K, q.V); }).join("; ");
+      } else {
+        task1.lines.push(rowsOk && !rangeOk ? "Строки таблицы должны охватывать заданный интервал с " + range[1] + ":00 до " + range[2] + ":00." :
+          "Введите N, соседние N₁ и N₂, положительный коэффициент C и строки скоростей и направлений из таблицы № 6409 на заданный интервал.");
+      }
+
+      var tA = currentTime(d.k1), tB = currentTime(d.k2), tc = currentTime(d.T2);
+      if (tB < tA) {
+        tB += 1440;
+        if (tc < tA) tc += 1440;
+      }
+      var K1 = num(d.a1), K2 = num(d.a2), V1 = num(d.v1), V2 = num(d.v2), kw = num(d.kw), vw = num(d.vw);
+      var q2 = null;
+      if (tA < tB && tc >= tA && tc <= tB && [K1, K2, kw].every(function (v) { return v >= 0 && v <= 360; }) &&
+          [V1, V2, vw].every(function (v) { return isFinite(v) && v >= 0; })) {
+        var share = (tc - tA) / (tB - tA), from = vec(K1, V1), to = vec(K2, V2);
+        var vt = betweenVectors(from, to, share), wind = vec(kw, vw), vs = [vt[0] + wind[0], vt[1] + wind[1]];
+        var pt = polar(vt), ps = polar(vs);
+        task2.figs = ["g2"];
+        task2.lines = [
+          "Приливное течение по таблице: " + d.k1 + " — " + currentAnswer(K1, V1) + ", " + d.k2 + " — " + currentAnswer(K2, V2) + ".",
+          "Геометрическая интерполяция на " + d.T2 + ". Доля отрезка между концами векторов " + f(share, 2) + ".",
+          "Ветровое течение по ч. III таблиц № 6004: " + currentAnswer(kw, vw) + ".",
+          "Суммарное течение получено сложением векторов приливного и ветрового течений."
+        ];
+        task2.answer = "Приливное — " + currentAnswer(pt[0], pt[1]) + ". Ветровое — " + currentAnswer(kw, vw) +
+          ". Суммарное — " + currentAnswer(ps[0], ps[1]) + ".";
+        q2 = { v1: from, v2: to, vt: vt, vs: vs, pt: pt, ps: ps, kw: kw, vw: vw, a1: K1, a2: K2, s1: V1, s2: V2, k1: d.k1, k2: d.k2 };
+      } else {
+        task2.lines.push("Из таблиц № 6004 введите соседние моменты приливного течения вокруг заданного времени, направления и скорости приливного и ветрового течений.");
+      }
+      var task3 = chartCurrent(d), steps = [task1, task2, task3];
+      var pending = steps.filter(function (s) { return !s.answer; }).map(function (s) { return s.no; });
+      return { steps: steps, warn: pending.length ? ["Требуются исходные данные для задач " + pending.join(", ") + "."] : [], p1: p1, q2: q2 };
     }
   });
 })();
